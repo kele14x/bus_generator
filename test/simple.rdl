@@ -1,0 +1,9 @@
+reg my_reg_t {
+    field {} f1;
+    field {} f2;
+};
+
+addrmap top {
+    my_reg_t A[4];
+    my_reg_t B;
+};

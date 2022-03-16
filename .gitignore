@@ -1,0 +1,11 @@
+# Editor
+~
+*.bak
+
+# IDE
+.idea/
+.vscode/
+
+# Python
+venv/
+.pytest_cache/
