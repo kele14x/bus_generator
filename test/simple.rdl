@@ -1,3 +1,5 @@
+// An simple register model from <https://systemrdl-compiler.readthedocs.io/en/stable/model_structure.html>
+
 reg my_reg_t {
     field {} f1;
     field {} f2;

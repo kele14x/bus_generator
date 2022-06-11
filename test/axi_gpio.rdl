@@ -1,0 +1,38 @@
+// GPIO module from Xilinx
+
+addrmap GPIO #(longint unsigned C_GPIO_WIDTH = 32) {
+
+    reg {
+        field {} GPIO_DATA[C_GPIO_WIDTH];
+    } GPIO_DATA @ 0x0;
+
+    reg {
+        field {} GPIO_TRI[C_GPIO_WIDTH];
+    } GPIO_TRI @ 0x4;
+
+    reg {
+        field {
+            name = "Global Interrupt Enable";
+        } GIE[31:31];
+    } GIER @ 0x11C;
+
+    reg {
+        field {
+
+        } CH0;
+
+        field {
+
+        } CH1;
+    } IPIER @ 0x128;
+
+    reg {
+        field {
+
+        } CH0;
+
+        field {
+
+        } CH1;
+    } IPISR @ 0x120;
+};

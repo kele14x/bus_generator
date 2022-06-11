@@ -12,4 +12,10 @@ python3 -m pip install systemrdl-comipler
 
 ## Usage
 
-[//]: # (TODO)
+TODO
+
+## Similar Projects
+
+- [PeakRDL-regblock](https://github.com/SystemRDL/PeakRDL-regblock)
+- [Ordt (open-register-design-tool)](https://github.com/Juniper/open-register-design-tool)
+- [airhdl](https://airhdl.com/)

@@ -19,3 +19,8 @@ def test_help():
 def test_simple():
     bus_generator.main(['test/simple.rdl'])
     return 0
+
+
+def test_axi_gpio():
+    bus_generator.main(['test/axi_gpio.rdl'])
+    return 0
