@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 import bus_generator
 
 
@@ -17,10 +17,10 @@ def test_help():
 
 
 def test_simple():
-    bus_generator.main(['test/simple.rdl'])
+    bus_generator.main(['tests/simple.rdl'])
     return 0
 
 
 def test_axi_gpio():
-    bus_generator.main(['test/axi_gpio.rdl'])
+    bus_generator.main(['tests/axi_gpio.rdl'])
     return 0
