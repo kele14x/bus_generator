@@ -1,6 +1,9 @@
 # Bus Generator
 
-**Bus Generator** is a tool to generate AXI4-Lite slave register SystemVerilog module. It supports **SystemRDL** - a standard register description format released by [accellera](https://www.accellera.org/). Currently it's a simple wrapper of [PeakRDL-regblock](https://github.com/SystemRDL/PeakRDL-regblock).
+**Bus Generator** is a simple wrapper of [PeakRDL-regblock](https://github.com/SystemRDL/PeakRDL-regblock).
+
+- **ReakRDL-regblock** is a library to generate AXI4-Lite slave register SystemVerilog module based on **SystemRDL** file.
+- **SystemRDL** is a register description standard format released by [Accellera](https://www.accellera.org/).
 
 ## Dependency
 

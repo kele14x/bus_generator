@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-bus_generator.py is a tool to generate AXI4-Lite slave register SystemVerilog module.
-It will generate a slave register module from a description file.
-
-Copyright (c) 2021 Kele14x.
+bus_generator.py is a simple wrapper of [PeakRDL-regblock](https://github.com/SystemRDL/PeakRDL-regblock).
 """
 import argparse
 import logging
