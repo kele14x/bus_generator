@@ -1,0 +1,86 @@
+addrmap pps_syncer {
+    name = "PPS Syncer";
+    default sw = rw;
+    default hw = r;
+
+    reg {
+        name = "Version register";
+
+        field {
+            name = "Version";
+            sw = r;
+            hw = na;
+        } version[31:0] = 32'h01234567;
+    } version;
+
+    reg {
+        name = "Control register";
+
+        field {
+            name = "Software reset";
+        } software_reset[0:0] = 1'b0;
+
+        field {
+            name = "Force freerun";
+        } force_freerun[1:1] = 1'b0;
+    } ctrl @ 0x4;
+
+    reg {
+        name = "Freerun phase increment offset register";
+
+        field {
+            name = "Freerun phase increment offset value";
+        } val [31:0];
+    } freerun_pinc_offset @ 0x8;
+
+    reg {
+        name = "Filter coefficients register";
+
+        field {
+            name = "KP value";
+        } kp [3:0] = 0;
+
+        field {
+            name = "KI value";
+        } ki [7:4] = 12;
+    } lpf_coe @ 0xC;
+
+    reg {
+        name = "Status register";
+
+        field {
+            name = "Locked status";
+            hw = w;
+        } locked [0:0];
+    } status @ 0x10;
+
+    reg {
+        name = "Running phase increment offset register";
+
+        field {
+            name = "Current phase increment offset value";
+            hw = w;
+        } val [31:0];
+    } current_pinc_offset @ 0x14;
+
+    reg {
+        name = "Loss lock count register";
+
+        field {
+            name = "Loss lock count value";
+            hw = w;
+        } val [31:0];
+    } loss_count @ 0x18;
+
+    reg {
+        name = "Tick register";
+
+        field {
+            name = "Snap";
+        } snap [0:0];
+
+        field {
+            name = "Clear";
+        } clear [1:1];
+    } tick @ 0x20;
+};
