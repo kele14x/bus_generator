@@ -42,6 +42,9 @@ class GeneralListener(RDLListener):
 
     def enter_AddressableComponent(self, node: AddressableNode):
         self._address = node.absolute_address
+        if node.current_idx:
+            for c in node.current_idx:
+                self._path[-1] += "_" + str(c)
 
 
 class ModelPrintingListener(GeneralListener):
