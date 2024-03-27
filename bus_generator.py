@@ -311,13 +311,14 @@ def main(argv=None):
 
     # Export a SystemVerilog implementation
     content = convert(rdlc, top, template_name='axi4l.v.jinja2')
+    # content = convert(rdlc, top, template_name='avalon_mm.v.jinja2')
     if args.output is not None:
         write_file(args.output, content, root.top.inst_name + '_regs.v')
 
-    tb_content = convert(rdlc, top, template_name='tb_axi4l.v.jinja2')
-    if args.output is not None:
-        write_file(args.output, tb_content,
-                   'tb_' + root.top.inst_name + '_regs.v')
+    # tb_content = convert(rdlc, top, template_name='tb_axi4l.v.jinja2')
+    # if args.output is not None:
+    #     write_file(args.output, tb_content,
+    #                'tb_' + root.top.inst_name + '_regs.v')
 
 
 if __name__ == '__main__':

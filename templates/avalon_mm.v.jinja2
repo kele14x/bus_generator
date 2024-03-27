@@ -1,0 +1,258 @@
+// File: {{ top_name }}_regs.v
+// Brief: Register block generate for {{ top_name }}
+`timescale 1 ns / 1 ps
+//
+`default_nettype none
+
+module {{ top_name }}_regs (
+    input  wire        clk_csr,
+    input  wire        rst_csr_n,
+    //
+    input  wire [{{ '{:2d}'.format(addr_width-1) }}:0] csr_address,
+    input  wire        csr_write,
+    input  wire [{{ '{:2d}'.format(data_width-1) }}:0] csr_writedata,
+    input  wire        csr_read,
+    output wire [{{ '{:2d}'.format(data_width-1) }}:0] csr_readdata,
+    output wire        csr_readdatavalid,
+    output wire        csr_waitrequest
+    {%- for field in fields %}
+        {%- if field.is_hw_readable or field.is_hw_writable -%}
+    ,
+    // {{ field.hierarchy }}
+            {%- if field.is_hw_writable -%}
+    ,
+    input  wire [{{ '{:2d}'.format(field.width-1) }}:0] {{ field.name }}_in
+            {%- endif %}
+            {%- if field.is_hw_readable -%}
+    ,
+    output wire [{{ '{:2d}'.format(field.width-1) }}:0] {{ field.name }}_out
+            {%- endif %}
+        {%- endif %}
+    {%- endfor %}
+    {%- for mem in mems -%}
+    ,
+    // {{ mem.hierarchy }}
+    output wire [{{ '{:2d}'.format(mem.addr_width-1) }}:0] {{ mem.name }}_addr,
+    output wire        {{ mem.name }}_en,
+    output wire        {{ mem.name }}_we,
+    output wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_din,
+    input  wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_dout
+    {%- endfor %}
+);
+
+    // Internal interface signals
+
+    reg  [{{ '{:2d}'.format(addr_width-1) }}:0] int_addr;
+    reg  [{{ '{:2d}'.format(data_width-1) }}:0] int_wr_data;
+    reg         int_wr_en;
+    reg         int_rd_en;
+
+    reg         int_wr_ack;
+    reg         int_wr_err;
+
+    reg         int_rd_ack;
+    reg         int_rd_err;
+    reg  [{{ '{:2d}'.format(data_width-1) }}:0] int_rd_data;
+
+
+    //--------------------------------------------------------------------------
+    // Avalon Memory-Mapped Interface
+    //--------------------------------------------------------------------------
+
+    // Internal interface
+
+    always @(posedge clk_csr) begin
+        int_addr <= csr_address;
+    end
+
+    always @(posedge clk_csr) begin
+        int_wr_data <= csr_writedata;
+    end
+
+    always @(posedge clk_csr) begin
+        int_wr_en <= csr_write;
+    end
+
+    always @(posedge clk_csr) begin
+        int_rd_en <= csr_read;
+    end
+
+    assign csr_readdata = int_rd_data;
+
+    assign csr_readdatavalid = int_rd_ack;
+
+    assign csr_waitrequest = 1'b0;
+
+
+    //--------------------------------------------------------------------------
+    // Address decoder
+    //--------------------------------------------------------------------------
+    {%- for field in fields %}
+
+    wire {{ field.name }}_strb;
+
+    assign {{ field.name }}_strb = (int_addr[{{ addr_width-1 }}:{{ addr_width_lsb }}] == 'h{{ '{:x}'.format(field.aligned_address) }});
+    {%- endfor %}
+    {%- for mem in mems %}
+
+    wire {{ mem.name }}_strb;
+
+    assign {{ mem.name }}_strb = (int_addr[{{ addr_width-1 }}:{{ mem.addr_msb+1 }}] == 'h{{ '{:x}'.format(mem.aligned_address) }});
+    {%- endfor %}
+
+    always @(*) begin
+        int_wr_ack = int_wr_en;
+    end
+
+    always @(*) begin
+        int_wr_err = 1'b1;
+        {%- for reg in regs %}
+        {%- if reg.has_sw_writable %}
+        if (int_addr[{{ addr_width-1 }}:{{ addr_width_lsb }}] == 'h{{ '{:x}'.format(reg.aligned_address) }}) begin
+            int_wr_err = 1'b0;
+        end
+        {%- endif %}
+        {%- endfor %}
+        {%- for mem in mems %}
+        {%- if mem.is_sw_writable %}
+        if (int_addr[{{ addr_width-1 }}:{{ mem.addr_msb+1 }}] == 'h{{ '{:x}'.format(mem.aligned_address) }}) begin
+            int_wr_err = 1'b0;
+        end
+        {%- endif %}
+        {%- endfor %}
+    end
+
+    always @(posedge clk_csr) begin
+        int_rd_ack <= int_rd_en;
+    end
+
+    always @(posedge clk_csr) begin
+        int_rd_err <= 1'b1;
+        {%- for reg in regs %}
+        {%- if reg.has_sw_readable %}
+        if (int_addr[{{ addr_width-1 }}:{{ addr_width_lsb }}] == 'h{{ '{:x}'.format(reg.aligned_address) }}) begin
+            int_rd_err <= 1'b0;
+        end
+        {%- endif %}
+        {%- endfor %}
+        {%- for mem in mems %}
+        {%- if mem.is_sw_readable %}
+        if (int_addr[{{ addr_width-1 }}:{{ mem.addr_msb+1 }}] == 'h{{ '{:x}'.format(mem.aligned_address) }}) begin
+            int_rd_err <= 1'b0;
+        end
+        {%- endif %}
+        {%- endfor %}
+    end
+
+
+    //--------------------------------------------------------------------------
+    // Field logic
+    //--------------------------------------------------------------------------
+    {%- for field in fields %}
+
+    // Field {{ field.hierarchy }} @'h{{ '{:x}'.format(field.address) }}[{{ field.msb }}:{{ field.lsb }}]
+
+    reg [{{ field.width-1 }}:0] {{ field.name }}_value;
+    {%- if field.implements_storage %}
+
+    always @(posedge clk_csr) begin
+        if (~rst_csr_n) begin
+            {{ field.name }}_value <= 'h{{ '{:x}'.format(field.reset) }};
+        {%- if field.is_sw_writable %}
+        end else if (int_wr_en && {{ field.name }}_strb) begin
+            {{ field.name }}_value <= int_wr_data[{{ field.msb }}:{{ field.lsb }}];
+        {%- endif %}
+        {%- if field.is_hw_writable %}
+        end else begin
+            {{ field.name }}_value <= {{ field.name }}_in;
+        {%- endif %}
+        end
+    end
+
+    {%- elif field.is_hw_writable %}
+
+    always @(*) begin
+        {{ field.name }}_value = {{ field.name }}_in;
+    end
+    {%- else %}
+
+    initial begin
+        {{ field.name }}_value = 'h{{ '{:x}'.format(field.reset) }};
+    end
+    {%- endif %}
+
+    {%- if field.is_hw_readable %}
+
+    assign {{ field.name }}_out = {{ field.name }}_value;
+    {%- endif %}
+    {%- endfor %}
+
+
+    //--------------------------------------------------------------------------
+    // Memory logic
+    //--------------------------------------------------------------------------
+    {%- for mem in mems %}
+
+    // Memory {{ mem.hierarchy }} @'h{{ '{:x}'.format(mem.address) }}
+
+    assign {{ mem.name }}_addr = int_addr[{{ mem.addr_msb }}:{{ mem.addr_lsb }}];
+    assign {{ mem.name }}_en   = ((int_wr_en || int_rd_en) && {{ mem.name }}_strb);
+    assign {{ mem.name }}_we   = (int_wr_en && {{ mem.name }}_strb);
+    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
+    {%- endfor %}
+
+
+    //--------------------------------------------------------------------------
+    // Register readback
+    //--------------------------------------------------------------------------
+
+    reg [{{ '{:2d}'.format(data_width-1) }}:0] field_rd_data;
+    reg [{{ '{:2d}'.format(data_width-1) }}:0] field_rd_data_next;
+
+    reg        field_strb;
+
+    always @(*) begin
+        field_rd_data_next = 1'sb0;
+        {%- for field in fields %}
+        if (int_rd_en && {{ field.name }}_strb) begin
+            field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] = field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] | {{ field.name }}_value;
+        end
+        {%- endfor %}
+    end
+
+    always @(posedge clk_csr) begin
+        field_rd_data <= field_rd_data_next;
+    end
+
+    always @(posedge clk_csr) begin
+        field_strb <= 1'b0;
+        {%- for field in fields %}
+        if (int_rd_en && {{ field.name }}_strb) begin
+            field_strb <= 1'b1;
+        end
+        {%- endfor %}
+    end
+    {%- for mem in mems %}
+
+    reg {{ mem.name }}_strb_d;
+
+    always @(posedge clk_csr) begin
+        {{ mem.name }}_strb_d <= {{ mem.name }}_strb;
+    end
+    {%- endfor %}
+
+    always @(*) begin
+        int_rd_data = 1'sb0;
+        if (field_strb) begin
+            int_rd_data = int_rd_data | field_rd_data;
+        end
+        {%- for mem in mems %}
+        if ({{ mem.name }}_strb_d) begin
+            int_rd_data[{{ mem.width-1 }}:0] = int_rd_data[{{ mem.width-1 }}:0] | {{ mem.name }}_dout;
+        end
+        {%- endfor %}
+    end
+
+endmodule
+
+`default_nettype wire
