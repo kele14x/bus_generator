@@ -47,19 +47,20 @@ module {{ top_name }}_regs (
     {%- endfor %}
     {%- for mem in mems -%}
     ,
-    // {{ mem.hierarchy }}
+    // {{ mem.hierarchy }},
     output wire [{{ '{:2d}'.format(mem.addr_width-1) }}:0] {{ mem.name }}_addr,
     output wire        {{ mem.name }}_en,
     output wire        {{ mem.name }}_we,
     output wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_din,
-    input  wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_dout
+    input  wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_dout,
+    input  wire        {{ mem.name }}_valid
     {%- endfor %}
 );
 
     wire        aclk;
     wire        aresetn;
 
-    reg         init;
+    reg         init_n;
 
     wire        aw_hsk;
     reg  [{{ '{:2d}'.format(addr_width-1) }}:0] aw_addr;
@@ -96,6 +97,8 @@ module {{ top_name }}_regs (
     reg  [{{ '{:2.0f}'.format(data_width/8-1) }}:0] int_wr_strb;
     reg         int_wr_en;
     reg         int_rd_en;
+    reg         int_req;
+    reg         int_wrb;
 
     reg         int_wr_ack;
     reg         int_wr_err;
@@ -116,9 +119,9 @@ module {{ top_name }}_regs (
 
     always @(posedge aclk) begin
         if (!aresetn) begin
-            init <= 1'b0;
+            init_n <= 1'b0;
         end else begin
-            init <= 1'b1;
+            init_n <= 1'b1;
         end
     end
 
@@ -131,7 +134,7 @@ module {{ top_name }}_regs (
     always @(posedge aclk) begin
         if (!aresetn) begin
             aw_addr <= 1'sb0;
-        end else if (aw_hsk == 1'b1) begin
+        end else if (aw_hsk) begin
             aw_addr <= s_axi_awaddr;
         end
     end
@@ -139,11 +142,11 @@ module {{ top_name }}_regs (
     always @(posedge aclk) begin
         if (!aresetn) begin
             aw_ready <= 1'b0;
-        end else if (init == 1'b0) begin
+        end else if (~init_n) begin
             aw_ready <= 1'b1;
-        end else if (b_hsk) begin
+        end else if (aw_ack) begin
             aw_ready <= 1'b1;
-        end else if (aw_hsk) begin
+        end else if (aw_hsk && (~w_hsk && ~w_req)) begin
             aw_ready <= 1'b0;
         end
     end
@@ -153,7 +156,7 @@ module {{ top_name }}_regs (
             aw_req <= 1'b0;
         end else if (aw_ack) begin
             aw_req <= 1'b0;
-        end else if (aw_hsk) begin
+        end else if (aw_hsk && (~w_hsk && ~w_req)) begin
             aw_req <= 1'b1;
         end
     end
@@ -167,7 +170,7 @@ module {{ top_name }}_regs (
     always @(posedge aclk) begin
         if (!aresetn) begin
             w_data <= 1'sb0;
-        end else if (w_hsk == 1'b1) begin
+        end else if (w_hsk) begin
             w_data <= s_axi_wdata;
         end
     end
@@ -175,7 +178,7 @@ module {{ top_name }}_regs (
     always @(posedge aclk) begin
         if (!aresetn) begin
             w_strb <= 1'sb0;
-        end else if (w_hsk == 1'b1) begin
+        end else if (w_hsk) begin
             w_strb <= s_axi_wstrb;
         end
     end
@@ -183,11 +186,11 @@ module {{ top_name }}_regs (
     always @(posedge aclk) begin
         if (!aresetn) begin
             w_ready <= 1'b0;
-        end else if (init == 1'b0) begin
+        end else if (~init_n) begin
             w_ready <= 1'b1;
-        end else if (b_hsk) begin
+        end else if (w_ack) begin
             w_ready <= 1'b1;
-        end else if (w_hsk) begin
+        end else if (w_hsk && (~aw_hsk && ~aw_req)) begin
             w_ready <= 1'b0;
         end
     end
@@ -197,7 +200,7 @@ module {{ top_name }}_regs (
             w_req <= 1'b0;
         end else if (w_ack) begin
             w_req <= 1'b0;
-        end else if (w_hsk) begin
+        end else if (w_hsk && (~aw_hsk && ~aw_req)) begin
             w_req <= 1'b1;
         end
     end
@@ -236,7 +239,7 @@ module {{ top_name }}_regs (
     always @(posedge aclk) begin
         if (!aresetn) begin
             ar_addr <= 1'sb0;
-        end else if (ar_hsk == 1'b1) begin
+        end else if (ar_hsk) begin
             ar_addr <= s_axi_araddr;
         end
     end
@@ -244,11 +247,12 @@ module {{ top_name }}_regs (
     always @(posedge aclk) begin
         if (!aresetn) begin
             ar_ready <= 1'b0;
-        end else if (init == 1'b0) begin
+        end else if (~init_n) begin
             ar_ready <= 1'b1;
-        end else if (r_hsk) begin
+        end else if (ar_ack) begin
             ar_ready <= 1'b1;
-        end else if (ar_hsk) begin
+        end else if (ar_hsk && ((aw_hsk && w_hsk) || (aw_hsk && w_req) ||
+            (aw_req && w_hsk) || (aw_req && w_req))) begin
             ar_ready <= 1'b0;
         end
     end
@@ -258,7 +262,8 @@ module {{ top_name }}_regs (
             ar_req <= 1'b0;
         end else if (ar_ack) begin
             ar_req <= 1'b0;
-        end else if (ar_hsk) begin
+        end else if (ar_hsk && ((aw_hsk && w_hsk) || (aw_hsk && w_req) ||
+            (aw_req && w_hsk) || (aw_req && w_req))) begin
             ar_req <= 1'b1;
         end
     end
@@ -301,17 +306,24 @@ module {{ top_name }}_regs (
     // Internal interface
 
     always @(*) begin
-        if (aw_req && w_req) begin
+        if (aw_req && (w_hsk || w_req)) begin
             aw_ack = 1'b1;
-            w_ack  = 1'b1;
         end else begin
             aw_ack = 1'b0;
+        end
+    end
+
+    always @(*) begin
+        if (w_req && (aw_hsk || w_req)) begin
+            w_ack  = 1'b1;
+        end else begin
             w_ack  = 1'b0;
         end
     end
 
     always @(*) begin
-        if (aw_req && w_req) begin
+        if ((aw_hsk && w_hsk) || (aw_hsk && w_req) ||
+            (aw_req && w_hsk) || (aw_req && w_req)) begin
             ar_ack = 1'b0;
         end else if (ar_req) begin
             ar_ack = 1'b1;
@@ -320,39 +332,71 @@ module {{ top_name }}_regs (
         end
     end
 
-    always @(*) begin
-        if (aw_req && w_req) begin
-            int_addr = aw_addr;
+    always @(posedge s_axi_aclk) begin
+        if (aw_hsk && (w_hsk || w_req)) begin
+            int_addr <= s_axi_awaddr;
+        end else if (aw_req && (w_hsk || w_req)) begin
+            int_addr <= aw_addr;
+        end else if (ar_hsk) begin
+            int_addr <= s_axi_araddr;
         end else if (ar_req) begin
-            int_addr = ar_addr;
-        end else begin
-            int_addr = 0;
+            int_addr <= ar_addr;
         end
     end
 
-    always @(*) begin
-      int_wr_data = w_data;
-    end
-
-    always @(*) begin
-      int_wr_strb = w_strb;
-    end
-
-    always @(*) begin
-        if (aw_req && w_req) begin
-            int_wr_en = 1'b1;
-        end else begin
-            int_wr_en = 1'b0;
+    always @(posedge s_axi_aclk) begin
+        if (w_hsk && (aw_hsk || aw_req)) begin
+            int_wr_data <= s_axi_wdata;
+        end else if (w_req && (aw_hsk || aw_req)) begin
+            int_wr_data <= w_data;
         end
     end
 
-    always @(*) begin
-        if (aw_req && w_req) begin
-            int_rd_en = 1'b0;
-        end else if (ar_req) begin
-            int_rd_en = 1'b1;
+    always @(posedge s_axi_aclk) begin
+        if (w_hsk && (aw_hsk || aw_req)) begin
+            int_wr_strb <= s_axi_wstrb;
+        end else if (w_req && (aw_hsk || aw_req)) begin
+            int_wr_strb <= w_strb;
+        end
+    end
+
+    always @(posedge s_axi_aclk) begin
+        if ((aw_hsk && w_hsk) || (aw_hsk && w_req) ||
+            (aw_req && w_hsk) || (aw_req && w_req)) begin
+            int_wr_en <= 1'b1;
         end else begin
-            int_rd_en = 1'b0;
+            int_wr_en <= 1'b0;
+        end
+    end
+
+    always @(posedge s_axi_aclk) begin
+        if ((aw_hsk && w_hsk) || (aw_hsk && w_req) ||
+            (aw_req && w_hsk) || (aw_req && w_req)) begin
+            int_rd_en <= 1'b0;
+        end else if (ar_hsk || ar_req) begin
+            int_rd_en <= 1'b1;
+        end else begin
+            int_rd_en <= 1'b0;
+        end
+    end
+
+    always @(posedge s_axi_aclk) begin
+        if ((aw_hsk && w_hsk) || (aw_hsk && w_req) ||
+            (aw_req && w_hsk) || (aw_req && w_req) || ar_hsk || ar_req) begin
+            int_req <= 1'b1;
+        end else if (int_wrb && int_wr_ack) begin
+            int_req <= 1'b0;
+        end else if (~int_wrb && int_rd_ack) begin
+            int_req <= 1'b0;
+        end
+    end
+
+    always @(posedge s_axi_aclk) begin
+        if ((aw_hsk && w_hsk) || (aw_hsk && w_req) ||
+            (aw_req && w_hsk) || (aw_req && w_req)) begin
+            int_wrb <= 1'b1;
+        end else if (ar_hsk || ar_req) begin
+            int_wrb <= 1'b0;
         end
     end
 
@@ -395,23 +439,30 @@ module {{ top_name }}_regs (
         {%- endfor %}
     end
 
-    always @(posedge aclk) begin
-        int_rd_ack <= int_rd_en;
+    always @(*) begin
+        int_rd_ack = int_rd_en;
+        {%- for mem in mems %}
+        {%- if mem.is_sw_readable %}
+        if (int_addr[{{ addr_width-1 }}:{{ mem.addr_msb+1 }}] == 'h{{ '{:x}'.format(mem.aligned_address) }}) begin
+            int_rd_ack = int_req && ~int_wrb && {{ mem.name }}_valid;
+        end
+        {%- endif %}
+        {%- endfor %}
     end
 
-    always @(posedge aclk) begin
-        int_rd_err <= 1'b1;
+    always @(*) begin
+        int_rd_err = 1'b1;
         {%- for reg in regs %}
         {%- if reg.has_sw_readable %}
         if (int_addr[{{ addr_width-1 }}:{{ addr_width_lsb }}] == 'h{{ '{:x}'.format(reg.aligned_address) }}) begin
-            int_rd_err <= 1'b0;
+            int_rd_err = 1'b0;
         end
         {%- endif %}
         {%- endfor %}
         {%- for mem in mems %}
         {%- if mem.is_sw_readable %}
         if (int_addr[{{ addr_width-1 }}:{{ mem.addr_msb+1 }}] == 'h{{ '{:x}'.format(mem.aligned_address) }}) begin
-            int_rd_err <= 1'b0;
+            int_rd_err = 1'b0;
         end
         {%- endif %}
         {%- endfor %}
@@ -505,14 +556,6 @@ module {{ top_name }}_regs (
         end
         {%- endfor %}
     end
-    {%- for mem in mems %}
-
-    reg {{ mem.name }}_strb_d;
-
-    always @(posedge aclk) begin
-        {{ mem.name }}_strb_d <= {{ mem.name }}_strb;
-    end
-    {%- endfor %}
 
     always @(*) begin
         int_rd_data = 1'sb0;
@@ -520,7 +563,7 @@ module {{ top_name }}_regs (
             int_rd_data = int_rd_data | field_rd_data;
         end
         {%- for mem in mems %}
-        if ({{ mem.name }}_strb_d) begin
+        if ({{ mem.name }}_strb) begin
             int_rd_data[{{ mem.width-1 }}:0] = int_rd_data[{{ mem.width-1 }}:0] | {{ mem.name }}_dout;
         end
         {%- endfor %}

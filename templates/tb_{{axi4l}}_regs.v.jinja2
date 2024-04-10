@@ -6,8 +6,8 @@
 
 module tb_{{ top_name }}_regs;
 
-    reg        s_axi_aclk;
-    reg        s_axi_aresetn;
+    reg         s_axi_aclk;
+    reg         s_axi_aresetn;
     //
     reg  [{{ '{:2d}'.format(addr_width-1) }}:0] s_axi_awaddr;
     reg  [ 2:0] s_axi_awprot;
@@ -51,6 +51,7 @@ module tb_{{ top_name }}_regs;
     wire        {{ mem.name }}_we;
     wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_din;
     reg  [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_dout;
+    reg         {{ mem.name }}_valid;
     {%- endfor %}
 
     task axi_reset();
@@ -146,6 +147,9 @@ module tb_{{ top_name }}_regs;
         end
     endtask
 
+
+    // DUT
+
     {{ top_name }}_regs DUT (
         .s_axi_aclk                              (s_axi_aclk),
         .s_axi_aresetn                           (s_axi_aresetn),
@@ -194,9 +198,37 @@ module tb_{{ top_name }}_regs;
         .{{ '{: <40}'.format(mem.name + '_en') }}({{ mem.name }}_en),
         .{{ '{: <40}'.format(mem.name + '_we') }}({{ mem.name }}_we),
         .{{ '{: <40}'.format(mem.name + '_din') }}({{ mem.name }}_din),
-        .{{ '{: <40}'.format(mem.name + '_dout') }}({{ mem.name }}_dout)
+        .{{ '{: <40}'.format(mem.name + '_dout') }}({{ mem.name }}_dout),
+        .{{ '{: <40}'.format(mem.name + '_valid') }}({{ mem.name }}_valid)
         {%- endfor %}
     );
+
+
+    // Memory Model
+
+    {%- for mem in mems %}
+
+    // {{ mem.hierarchy }}
+
+    reg [31:0] {{ mem.name}}_mem [0:{{ mem.mementries }}];
+
+    always @(posedge s_axi_aclk) begin
+        if ({{ mem.name}}_en == 1'b1) begin
+            {{ mem.name }}_dout <= {{ mem.name}}_mem[{{ mem.name}}_addr];
+        end
+    end
+
+    always @(posedge s_axi_aclk) begin
+        if ({{ mem.name}}_en == 1'b1 && {{ mem.name}}_we == 1'b1) begin
+            {{ mem.name}}_mem[{{ mem.name}}_addr] <= {{ mem.name }}_din;
+        end
+    end
+
+    always @(posedge s_axi_aclk) begin
+        {{ mem.name}}_valid <= {{ mem.name}}_en;
+    end
+
+    {%- endfor %}
 
 
     // Stimulation
@@ -240,19 +272,20 @@ module tb_{{ top_name }}_regs;
         {%- endfor %}
         {%- for mem in mems %}
         // {{ mem.hierarchy }}
+            {%- if mem.is_sw_writable %}
+        for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
+            addr = ('h{{ '{:x}'.format(mem.address) }} + i * 4);
+            data = addr ^ ({ {{ mem.width }} { 1'b1 } });
+            axi_write(addr, data, resp);
+        end
+            {%- endif %}
             {%- if mem.is_sw_readable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
             addr = ('h{{ '{:x}'.format(mem.address) }} + i * 4);
             axi_read(addr, data, resp);
         end
             {%- endif %}
-            {%- if mem.is_sw_writable %}
-        for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
-            addr = ('h{{ '{:x}'.format(mem.address) }} + i * 4);
-            data = data ^ ({ {{ mem.width }} { 1'b1 } });
-            axi_write(addr, data, resp);
-        end
-            {%- endif %}
+
 
         {%- endfor %}
         #1000;
