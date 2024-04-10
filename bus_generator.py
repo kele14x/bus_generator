@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Generate Verilog Control/Status RegisterNode (CSR) module from a SystemRDL
 source."""
+
 import argparse
 import logging
 import os
+import re
 import subprocess
 import sys
 
@@ -16,7 +18,7 @@ from systemrdl.node import Node, AddressableNode, VectorNode, \
 
 try:
     cwd = os.path.dirname(os.path.abspath(__file__))
-    __version__ = subprocess.check_output(["git", "describe", "--tags"], cwd=cwd).strip().decode('utf-8')
+    __version__ = subprocess.check_output(['git', 'describe', '--tags'], cwd=cwd).strip().decode('utf-8')
 except subprocess.SubprocessError:
     __version__ = 'unknown'
 
@@ -172,6 +174,10 @@ def parse_arguments(argv=None) -> argparse.Namespace:
     parser.add_argument('-p', '--print',
                         help='print model hierarchy',
                         action='store_true')
+    parser.add_argument('-t', '--templates',
+                        help='specify the template file(s)',
+                        default=['{{axi4l}}_regs.v'],
+                        nargs='+')
     parser.add_argument('-o', '--output',
                         help='write output to specified folder')
     # By default, the logging level is set to WARNING, which means all
@@ -209,8 +215,7 @@ def print_hierarchy(rdlc: RDLCompiler, top: AddrmapNode):
     walker.walk(top, listener)
 
 
-def convert(rdlc: RDLCompiler, top: AddrmapNode,
-            template_name: str = 'axi4l.v.jinja2'):
+def convert(rdlc: RDLCompiler, top: AddrmapNode, template: str):
     """Convert compiled node hierarchy to generator friendly format."""
     walker = RDLWalker(unroll=True)
 
@@ -236,7 +241,7 @@ def convert(rdlc: RDLCompiler, top: AddrmapNode,
     )
 
     # Render and write target files
-    template = env.get_template(template_name)
+    template = env.get_template(template)
     content = template.render({
         'top_name': top.inst_name,
         'addr_width': ceil(log2(top.total_size)),
@@ -309,16 +314,13 @@ def main(argv=None):
     if args.print:
         print_hierarchy(rdlc, top)
 
-    # Export a SystemVerilog implementation
-    content = convert(rdlc, top, template_name='axi4l.v.jinja2')
-    # content = convert(rdlc, top, template_name='avalon_mm.v.jinja2')
-    if args.output is not None:
-        write_file(args.output, content, root.top.inst_name + '_regs.v')
-
-    # tb_content = convert(rdlc, top, template_name='tb_axi4l.v.jinja2')
-    # if args.output is not None:
-    #     write_file(args.output, tb_content,
-    #                'tb_' + root.top.inst_name + '_regs.v')
+    # Render template
+    for template in args.templates:
+        # Export a implementation
+        content = convert(rdlc, top, template=template + '.jinja2')
+        name = re.sub(r'{{.*}}', root.top.inst_name, template)
+        if args.output is not None:
+            write_file(args.output, content, name)
 
 
 if __name__ == '__main__':
