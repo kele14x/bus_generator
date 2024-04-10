@@ -19,7 +19,7 @@ Python3 and some packages (see **requirements.txt**).
 3. (Optinal) Active the virtual environment:
 
     ```bash
-    . .\\venv\\Scripts\\activate.ps1
+    . .\\venv\\Scripts\\Activate.ps1
     ```
 
 4. Install required package from [PyPi](https://pypi.org/) using:

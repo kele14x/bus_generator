@@ -17,5 +17,10 @@ def test_help():
 
 
 def test_axi_gpio():
-    bus_generator.main(['tests/gpio.csv'])
+    bus_generator.main(['./tests/gpio.rdl'])
+    return 0
+
+
+def test_axi_mem():
+    bus_generator.main(['./tests/ram.rdl'])
     return 0

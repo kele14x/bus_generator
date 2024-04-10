@@ -1,5 +1,6 @@
-addrmap lowphy {
-    name = "Low PHY";
+addrmap ram {
+    name = "Memory Test";
+
     default sw = rw;
     default hw = r;
     default memwidth = 32;
@@ -7,10 +8,10 @@ addrmap lowphy {
     external mem {
         mementries = 14;
         sw = rw;
-    } dl_phase_comp @ 0x100;
+    } ram0 @ 0x100;
 
     external mem {
         mementries = 14;
         sw = rw;
-    } ul_phase_comp @ 0x140;
+    } ram1 @ 0x140;
 };
