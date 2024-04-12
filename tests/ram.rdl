@@ -5,6 +5,27 @@ addrmap ram {
     default hw = r;
     default memwidth = 32;
 
+    reg {
+        name = "Register 0";
+
+        field {
+            name = "Register 0 Field 0";
+
+        } field0[31:0] = 0x0;
+    } reg0 @ 0x0;
+
+
+    reg {
+        name = "Register 1";
+
+        field {
+            name = "Register 1 Field 0";
+
+            sw = r;
+            hw = w;
+        } field0[31:0] = 0x0;
+    } reg1 @ 0x4;
+
     external mem {
         mementries = 14;
         sw = rw;

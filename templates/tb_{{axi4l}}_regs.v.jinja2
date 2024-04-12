@@ -259,6 +259,7 @@ module tb_{{ top_name }}_regs;
         // Write / read test
         @(posedge s_axi_aclk);
         {%- for field in fields %}
+
         // {{ field.hierarchy }}
             {%- if field.is_sw_readable %}
         addr = 'h{{ '{:x}'.format(field.address) }};
@@ -271,6 +272,7 @@ module tb_{{ top_name }}_regs;
 
         {%- endfor %}
         {%- for mem in mems %}
+
         // {{ mem.hierarchy }}
             {%- if mem.is_sw_writable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin

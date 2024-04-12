@@ -1,6 +1,7 @@
 # Editor
 ~
 *.bak
+*.bkp
 
 # IDE
 .idea/
