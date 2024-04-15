@@ -9,7 +9,8 @@ module tb_axi4l_int;
   parameter int ADDR_WIDTH = 10;
   parameter int DATA_WIDTH = 32;
 
-  parameter int NUM_TRANSACTION = 100;
+  parameter int NUM_WR_TRANS = 100;
+  parameter int NUM_RD_TRANS = 100;
 
   logic                    s_axi_aclk;
   logic                    s_axi_aresetn;
@@ -514,8 +515,8 @@ module tb_axi4l_int;
     $timeformat(-9, 2, " ns", 20);
     dut_reset();
     fork
-      axi_driver(NUM_TRANSACTION, NUM_TRANSACTION);
-      int_driver(NUM_TRANSACTION, NUM_TRANSACTION);
+      axi_driver(NUM_WR_TRANS, NUM_RD_TRANS);
+      int_driver(NUM_WR_TRANS, NUM_RD_TRANS);
     join
 
     #1000;
