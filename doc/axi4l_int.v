@@ -83,9 +83,6 @@ module axi4l_int #(
 
   // Internal signals
 
-  wire                    wr_valid;
-  wire                    rd_valid;
-
   reg                     int_wr_req;
   reg                     int_wr_pend;
   reg                     int_wr_err_reg;
@@ -306,6 +303,7 @@ module axi4l_int #(
       r_valid <= r_valid;
     end
   end
+
 
   // Internal interface
   //-------------------
