@@ -1,0 +1,9 @@
+.Xil/
+xcrg_code_cov_report/
+xsim.codeCov/
+xsim.dir/
+
+*.jou
+*.log
+*.pb
+*.wdb

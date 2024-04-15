@@ -125,23 +125,23 @@ module axi4l_int #(
     end
   end
 
-  // aw_req aw_valid (w_hsk || w_req) int_wr_req  aw_req_next
-  //      0        0                0          0            0
-  //      0        0                0          1            0
-  //      0        0                1          0            0
-  //      0        0                1          1            0
-  //      0        1                0          0            1 *
-  //      0        1                0          1            1 *
-  //      0        1                1          0            0
-  //      0        1                1          1            1 *
-  //      1        0                0          0            1
-  //      1        0                0          1            1
-  //      1        0                1          0            0 *
-  //      1        0                1          1            1
-  //      1        1                0          0            1
-  //      1        1                0          1            1
-  //      1        1                1          0            0 *
-  //      1        1                1          1            1
+  // aw_req aw_valid (w_hsk || w_req) int_wr_req aw_req_next
+  //      0        0                0          0           0
+  //      0        0                0          1           0
+  //      0        0                1          0           0
+  //      0        0                1          1           0
+  //      0        1                0          0           1 *
+  //      0        1                0          1           1 *
+  //      0        1                1          0           0
+  //      0        1                1          1           1 *
+  //      1        0                0          0           1
+  //      1        0                0          1           1
+  //      1        0                1          0           0 *
+  //      1        0                1          1           1
+  //      1        1                0          0           1
+  //      1        1                0          1           1
+  //      1        1                1          0           0 *
+  //      1        1                1          1           1
   always @(posedge aclk) begin
     if (!aresetn) begin
       aw_req <= 1'b0;
@@ -190,23 +190,23 @@ module axi4l_int #(
     end
   end
 
-  // w_req w_valid (aw_hsk || aw_req) int_wr_req  w_req_next
-  //     0       0                  0          0           0
-  //     0       0                  0          1           0
-  //     0       0                  1          0           0
-  //     0       0                  1          1           0
-  //     0       1                  0          0           1 *
-  //     0       1                  0          1           1 *
-  //     0       1                  1          0           0
-  //     0       1                  1          1           1 *
-  //     1       0                  0          0           1
-  //     1       0                  0          1           1
-  //     1       0                  1          0           0 *
-  //     1       0                  1          1           1
-  //     1       1                  0          0           1
-  //     1       1                  0          1           1
-  //     1       1                  1          0           0 *
-  //     1       1                  1          1           1
+  // w_req w_valid (aw_hsk || aw_req) int_wr_req w_req_next
+  //     0       0                  0          0          0
+  //     0       0                  0          1          0
+  //     0       0                  1          0          0
+  //     0       0                  1          1          0
+  //     0       1                  0          0          1 *
+  //     0       1                  0          1          1 *
+  //     0       1                  1          0          0
+  //     0       1                  1          1          1 *
+  //     1       0                  0          0          1
+  //     1       0                  0          1          1
+  //     1       0                  1          0          0 *
+  //     1       0                  1          1          1
+  //     1       1                  0          0          1
+  //     1       1                  0          1          1
+  //     1       1                  1          0          0 *
+  //     1       1                  1          1          1
   always @(posedge aclk) begin
     if (!aresetn) begin
       w_req <= 1'b0;
@@ -408,15 +408,15 @@ module axi4l_int #(
       int_addr <= aw_addr;
     end else if (aw_hsk && (w_hsk || w_req) && ~int_wr_req) begin
       int_addr <= s_axi_awaddr;
-    end else if (ar_req && ~int_rd_req) begin
+    end else if (~wr_valid && ar_req && ~int_rd_req) begin
       int_addr <= ar_addr;
-    end else if (ar_hsk && ~int_rd_req) begin
+    end else if (~wr_valid && ar_hsk && ~int_rd_req) begin
       int_addr <= s_axi_araddr;
     end
   end
 
   always @(posedge s_axi_aclk) begin
-    if (~s_axi_aresetn) begin 
+    if (~s_axi_aresetn) begin
       int_wr_data <= 1'sb0;
     end else if (w_req && (aw_hsk || aw_req) && ~int_wr_req) begin
       int_wr_data <= w_data;
@@ -473,29 +473,29 @@ module axi4l_int #(
 
   // Internal state
 
-  // int_wr_req wr_valid int_wr_ack (b_valid && ~s_axi_bready) int_wr_req_next
-  //          0        0          0                          0               0
-  //          0        0          0                          1               0
-  //          0        0          1                          0               0
-  //          0        0          1                          1               0
-  //          0        1          0                          0               1 *
-  //          0        1          0                          1               1 *
-  //          0        1          1                          0               1 *
-  //          0        1          1                          1               1 *
-  //          1        0          0                          0               1
-  //          1        0          0                          1               1
-  //          1        0          1                          0               0 *
-  //          1        0          1                          1               1
-  //          1        1          0                          0               1
-  //          1        1          0                          1               1
-  //          1        1          1                          0               0 *
-  //          1        1          1                          1               1
+  // int_wr_req wr_valid (int_wr_ack || int_wr_pend) (b_valid && ~s_axi_bready) int_wr_req_next
+  //          0        0                           0                          0               0
+  //          0        0                           0                          1               0
+  //          0        0                           1                          0               0
+  //          0        0                           1                          1               0
+  //          0        1                           0                          0               1 *
+  //          0        1                           0                          1               1 *
+  //          0        1                           1                          0               1 *
+  //          0        1                           1                          1               1 *
+  //          1        0                           0                          0               1
+  //          1        0                           0                          1               1
+  //          1        0                           1                          0               0 *
+  //          1        0                           1                          1               1
+  //          1        1                           0                          0               1
+  //          1        1                           0                          1               1
+  //          1        1                           1                          0               0 *
+  //          1        1                           1                          1               1
   always @(posedge s_axi_aclk) begin
     if (~s_axi_aresetn) begin
       int_wr_req <= 1'b0;
     end else if (~int_wr_req && wr_valid) begin
       int_wr_req <= 1'b1;
-    end else if (int_wr_req && int_wr_ack && ~(b_valid && ~s_axi_bready)) begin
+    end else if (int_wr_req && (int_wr_ack || int_wr_pend) && ~(b_valid && ~s_axi_bready)) begin
       int_wr_req <= 1'b0;
     end else begin
       int_wr_req <= int_wr_req;
@@ -531,29 +531,29 @@ module axi4l_int #(
     end
   end
 
-  // int_rd_req rd_valid int_rd_ack (r_valid && ~s_axi_rready) int_rd_req_next
-  //          0        0          0                          0               0
-  //          0        0          0                          1               0
-  //          0        0          1                          0               0
-  //          0        0          1                          1               0
-  //          0        1          0                          0               1 *
-  //          0        1          0                          1               1 *
-  //          0        1          1                          0               1 *
-  //          0        1          1                          1               1 *
-  //          1        0          0                          0               1
-  //          1        0          0                          1               1
-  //          1        0          1                          0               0 *
-  //          1        0          1                          1               1
-  //          1        1          0                          0               1
-  //          1        1          0                          1               1
-  //          1        1          1                          0               0 *
-  //          1        1          1                          1               1
+  // int_rd_req rd_valid (int_rd_ack || int_rd_pend) (r_valid && ~s_axi_rready) int_rd_req_next
+  //          0        0                           0                          0               0
+  //          0        0                           0                          1               0
+  //          0        0                           1                          0               0
+  //          0        0                           1                          1               0
+  //          0        1                           0                          0               1 *
+  //          0        1                           0                          1               1 *
+  //          0        1                           1                          0               1 *
+  //          0        1                           1                          1               1 *
+  //          1        0                           0                          0               1
+  //          1        0                           0                          1               1
+  //          1        0                           1                          0               0 *
+  //          1        0                           1                          1               1
+  //          1        1                           0                          0               1
+  //          1        1                           0                          1               1
+  //          1        1                           1                          0               0 *
+  //          1        1                           1                          1               1
   always @(posedge s_axi_aclk) begin
     if (~s_axi_aresetn) begin
       int_rd_req <= 1'b0;
     end else if (~int_rd_req && rd_valid) begin
       int_rd_req <= 1'b1;
-    end else if (int_rd_req && int_rd_ack && ~(r_valid && ~s_axi_rready)) begin
+    end else if (int_rd_req && (int_rd_ack || int_rd_pend) && ~(r_valid && ~s_axi_rready)) begin
       int_rd_req <= 1'b0;
     end else begin
       int_rd_req <= int_rd_req;
