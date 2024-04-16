@@ -56,22 +56,47 @@ module tb_{{ top_name }}_regs;
 
     task axi_reset();
         begin
-            @(posedge s_axi_aclk);
             s_axi_awaddr  <= 0;
             s_axi_awprot  <= 0;
             s_axi_awvalid <= 0;
-
+            //
             s_axi_wdata   <= 0;
             s_axi_wstrb   <= 0;
             s_axi_wvalid  <= 0;
-
+            //
             s_axi_bready  <= 0;
-
+            //
             s_axi_araddr  <= 0;
             s_axi_arprot  <= 0;
             s_axi_arvalid <= 0;
-
+            //
             s_axi_rready  <= 0;
+        end
+    endtask
+
+    task regs_reset();
+        begin
+            {%- for field in fields %}
+                {%- if field.is_hw_writable %}
+            // {{ field.hierarchy }}
+            {{ field.name }}_in <= 0;
+                {%- endif %}
+            {%- endfor %}
+            {%- for mem in mems %}
+
+            // {{ mem.hierarchy }}
+            {{ mem.name }}_dout <= 0;
+            {{ mem.name }}_valid <= 0;
+            {%- endfor %}
+        end
+    endtask
+
+    task reset();
+        begin
+            s_axi_aresetn <= 0;
+            repeat(16) @(posedge s_axi_aclk);
+            s_axi_aresetn <= 1;
+            repeat(16) @(posedge s_axi_aclk);
         end
     endtask
 
@@ -241,11 +266,6 @@ module tb_{{ top_name }}_regs;
         end
     end
 
-    initial begin
-        s_axi_aresetn = 0;
-        #100 s_axi_aresetn = 1;
-    end
-
     initial begin : p_stimu
         reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr;
         reg [{{ '{:2d}'.format(data_width-1) }}:0] data;
@@ -254,22 +274,24 @@ module tb_{{ top_name }}_regs;
 
         // Wait reset done
         axi_reset();
-        wait(s_axi_aresetn);
+        regs_reset();
+        reset();
 
         // Write / read test
-        @(posedge s_axi_aclk);
         {%- for field in fields %}
 
         // {{ field.hierarchy }}
-            {%- if field.is_sw_readable %}
         addr = 'h{{ '{:x}'.format(field.address) }};
-        axi_read(addr, data, resp);
+            {%- if field.is_hw_writable %}
+        {{ field.name }}_in <= $urandom();
             {%- endif %}
             {%- if field.is_sw_writable %}
-        data = data ^ ({ {{ field.width }} { 1'b1 } } << {{ field.lsb }});
+        data = $urandom();
         axi_write(addr, data, resp);
             {%- endif %}
-
+            {%- if field.is_sw_readable %}
+        axi_read(addr, data, resp);
+            {%- endif %}
         {%- endfor %}
         {%- for mem in mems %}
 
@@ -277,7 +299,7 @@ module tb_{{ top_name }}_regs;
             {%- if mem.is_sw_writable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
             addr = ('h{{ '{:x}'.format(mem.address) }} + i * 4);
-            data = addr ^ ({ {{ mem.width }} { 1'b1 } });
+            data = $urandom();
             axi_write(addr, data, resp);
         end
             {%- endif %}
