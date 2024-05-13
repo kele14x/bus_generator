@@ -1,0 +1,18 @@
+// C header generated for {{ top_name }}
+{%- for field in fields %}
+
+/* {{ field.hierarchy }} */
+/* Type: {{ field.sw }} */
+#define {{ field.name|upper }}_ADDR 0x{{ '{:x}'.format(field.address) }} /* {{ field.address }} */
+#define {{ field.name|upper }}_MASK 0x{{ '{:x}'.format(field.mask) }} /* {{ field.mask }} */
+#define {{ field.name|upper }}_OFFSET 0x{{ '{:x}'.format(field.low) }} /* {{ field.low }} */
+#define {{ field.name|upper }}_WIDTH 0x{{ '{:x}'.format(field.width) }} /* {{ field.width }} */
+#define {{ field.name|upper }}_DEFAULT 0x{{ '{:x}'.format(field.reset) }} /* {{ field.reset }} */
+{%- endfor %}
+
+{%- for mem in mems %}
+
+// {{ mem.hierarchy }}
+#define {{ mem.name|upper }}_ADDR 0x{{ '{:x}'.format(mem.address) }} /* {{ mem.address }} */
+#define {{ mem.name|upper }}_SIZE 0x{{ '{:x}'.format(mem.mementries * 4) }} /* {{ mem.mementries * 4 }} */
+{%- endfor %}

@@ -103,16 +103,19 @@ class FieldsGatheringListener(GeneralListener):
     def exit_Field(self, node: FieldNode):
         field = {
             'name': "_".join(self._path),
+            'desc': node.get_property('desc'),
             'hierarchy': ".".join(self._path),
             'address': self._address,
             'aligned_address': int(self._address / 4),
             'reset': node.get_property('reset') or 0,
             'width': node.high - node.low + 1,
             'high': node.high,
+            'mask': 2 ** (node.high + 1) - 2 ** node.low,
             'low': node.low,
             'msb': node.msb,
             'lsb': node.lsb,
             'implements_storage': node.implements_storage,
+            'sw': node.get_property('sw').name,
             'is_sw_writable': node.is_sw_writable,
             'is_sw_readable': node.is_sw_readable,
             'is_hw_writable': node.is_hw_writable,
@@ -129,6 +132,7 @@ class MemGatheringListener(GeneralListener):
     def exit_Mem(self, node: MemNode):
         mem = {
             'name': "_".join(self._path),
+            'desc': node.get_property('desc'),
             'hierarchy': ".".join(self._path),
             'address': node.absolute_address,
             'aligned_address': floor(
@@ -139,6 +143,7 @@ class MemGatheringListener(GeneralListener):
             'addr_msb': ceil(log2(node.size)) - 1,
             'addr_lsb': ceil(log2(self._data_width / 8)),
             'width': node.get_property('memwidth'),
+            'sw': node.get_property('sw').name,
             'is_sw_writable': node.is_sw_writable,
             'is_sw_readable': node.is_sw_readable,
         }
