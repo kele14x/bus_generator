@@ -66,14 +66,12 @@ module {{ top_name }}_regs (
     reg  [{{ '{:2d}'.format(addr_width-1) }}:0] aw_addr;
     reg         aw_ready;
     reg         aw_req;
-    reg         aw_ack;
 
     wire        w_hsk;
     reg  [{{ '{:2d}'.format(data_width-1) }}:0] w_data;
     reg  [{{ '{:2.0f}'.format(data_width/8-1) }}:0] w_strb;
     reg         w_ready;
     reg         w_req;
-    reg         w_ack;
 
     wire        b_hsk;
     reg  [ 1:0] b_resp;
@@ -83,7 +81,6 @@ module {{ top_name }}_regs (
     reg  [{{ '{:2d}'.format(addr_width-1) }}:0] ar_addr;
     reg         ar_ready;
     reg         ar_req;
-    reg         ar_ack;
 
     wire        r_hsk;
     reg  [{{ '{:2d}'.format(data_width-1) }}:0] r_data;
