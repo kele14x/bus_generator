@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import bus_generator
+import src.bus_generator.bus_generator as bus_generator
 
 
 def test_version():

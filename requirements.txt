@@ -1,2 +1,2 @@
-systemrdl-compiler~=1.25
-Jinja2~=3.1.2
+systemrdl-compiler~=1.32.1
+Jinja2~=3.1.6

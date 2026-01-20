@@ -1,0 +1,17 @@
+[project]
+name = "bus-generator"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "jinja2>=3.1.6",
+    "systemrdl-compiler>=1.32.1",
+]
+
+[project.scripts]
+bus-generator = "bus_generator:main"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
