@@ -8,11 +8,12 @@ module axi4l_int #(
     parameter integer ADDR_WIDTH = 10,
     parameter integer DATA_WIDTH = 32
 ) (
+    // AXI4-Lite Slave Interface
     input  wire                    s_axi_aclk,
     input  wire                    s_axi_aresetn,
     //
     input  wire [  ADDR_WIDTH-1:0] s_axi_awaddr,
-    input  wire [             2:0] s_axi_awprot,
+    // input  wire [             2:0] s_axi_awprot,
     input  wire                    s_axi_awvalid,
     output wire                    s_axi_awready,
     //
@@ -26,7 +27,7 @@ module axi4l_int #(
     input  wire                    s_axi_bready,
     //
     input  wire [  ADDR_WIDTH-1:0] s_axi_araddr,
-    input  wire [             2:0] s_axi_arprot,
+    // input  wire [             2:0] s_axi_arprot,
     input  wire                    s_axi_arvalid,
     output wire                    s_axi_arready,
     //
@@ -34,7 +35,7 @@ module axi4l_int #(
     output wire [             1:0] s_axi_rresp,
     output wire                    s_axi_rvalid,
     input  wire                    s_axi_rready,
-    // reg0.field0,
+    // Internal Interface
     output reg  [  ADDR_WIDTH-1:0] int_addr,
     output reg  [  DATA_WIDTH-1:0] int_wr_data,
     output reg  [DATA_WIDTH/8-1:0] int_wr_strb,
@@ -116,7 +117,7 @@ module axi4l_int #(
 
   always @(posedge aclk) begin
     if (!aresetn) begin
-      aw_addr <= 1'sb0;
+      aw_addr <= {ADDR_WIDTH{1'b0}};
     end else if (aw_hsk) begin
       aw_addr <= s_axi_awaddr;
     end
@@ -156,7 +157,7 @@ module axi4l_int #(
 
   always @(posedge aclk) begin
     if (!aresetn) begin
-      w_data <= 1'sb0;
+      w_data <= {DATA_WIDTH{1'b0}};
     end else if (w_hsk) begin
       w_data <= s_axi_wdata;
     end
@@ -164,7 +165,7 @@ module axi4l_int #(
 
   always @(posedge aclk) begin
     if (!aresetn) begin
-      w_strb <= 1'sb0;
+      w_strb <= {DATA_WIDTH / 8{1'b0}};
     end else if (w_hsk) begin
       w_strb <= s_axi_wstrb;
     end
@@ -232,7 +233,7 @@ module axi4l_int #(
 
   always @(posedge aclk) begin
     if (!aresetn) begin
-      ar_addr <= 1'sb0;
+      ar_addr <= {ADDR_WIDTH{1'b0}};
     end else if (ar_hsk) begin
       ar_addr <= s_axi_araddr;
     end
@@ -274,7 +275,7 @@ module axi4l_int #(
 
   always @(posedge aclk) begin
     if (!aresetn) begin
-      r_data <= 1'sb0;
+      r_data <= {DATA_WIDTH{1'b0}};
     end else if (~r_valid && int_rd_pend) begin
       r_data <= int_rd_data_reg;
     end else if (~r_valid && int_rd_req && int_rd_ack) begin
@@ -310,9 +311,9 @@ module axi4l_int #(
 
   // Write / read arbitration
 
-  always @(posedge s_axi_aclk) begin
-    if (~s_axi_aresetn) begin
-      int_addr <= 1'sb0;
+  always @(posedge aclk) begin
+    if (!aresetn) begin
+      int_addr <= {ADDR_WIDTH{1'b0}};
     end else if (aw_req && w_req && ~int_wr_req) begin
       int_addr <= aw_addr;
     end else if (~(aw_req && w_req) && ar_req && ~int_rd_req) begin
@@ -320,23 +321,23 @@ module axi4l_int #(
     end
   end
 
-  always @(posedge s_axi_aclk) begin
-    if (~s_axi_aresetn) begin
-      int_wr_data <= 1'sb0;
+  always @(posedge aclk) begin
+    if (!aresetn) begin
+      int_wr_data <= {DATA_WIDTH{1'b0}};
     end else if (w_req && aw_req && ~int_wr_req) begin
       int_wr_data <= w_data;
     end
   end
 
-  always @(posedge s_axi_aclk) begin
-    if (~s_axi_aresetn) begin
-      int_wr_strb <= 2'b00;
+  always @(posedge aclk) begin
+    if (!aresetn) begin
+      int_wr_strb <= {DATA_WIDTH / 8{1'b0}};
     end else if (w_req && aw_req && ~int_wr_req) begin
       int_wr_strb <= w_strb;
     end
   end
 
-  always @(posedge s_axi_aclk) begin
+  always @(posedge aclk) begin
     if (aw_req && w_req && ~int_wr_req) begin
       int_wr_en <= 1'b1;
     end else begin
@@ -344,7 +345,7 @@ module axi4l_int #(
     end
   end
 
-  always @(posedge s_axi_aclk) begin
+  always @(posedge aclk) begin
     if (~(aw_req && w_req) && ar_req && ~int_rd_req) begin
       int_rd_en <= 1'b1;
     end else begin
@@ -354,19 +355,19 @@ module axi4l_int #(
 
   // Response
 
-  always @(posedge s_axi_aclk) begin
+  always @(posedge aclk) begin
     if (int_wr_req && ~int_wr_pend && int_wr_ack) begin
       int_wr_err_reg <= int_wr_err;
     end
   end
 
-  always @(posedge s_axi_aclk) begin
+  always @(posedge aclk) begin
     if (int_rd_req && ~int_rd_pend && int_rd_ack) begin
       int_rd_err_reg <= int_rd_err;
     end
   end
 
-  always @(posedge s_axi_aclk) begin
+  always @(posedge aclk) begin
     if (int_rd_req && ~int_rd_pend && int_rd_ack) begin
       int_rd_data_reg <= int_rd_data;
     end
@@ -374,8 +375,8 @@ module axi4l_int #(
 
   // Internal state
 
-  always @(posedge s_axi_aclk) begin
-    if (~s_axi_aresetn) begin
+  always @(posedge aclk) begin
+    if (!aresetn) begin
       int_wr_req <= 1'b0;
     end else if (~int_wr_req && aw_req && w_req) begin
       int_wr_req <= 1'b1;
@@ -386,8 +387,8 @@ module axi4l_int #(
     end
   end
 
-  always @(posedge s_axi_aclk) begin
-    if (~s_axi_aresetn) begin
+  always @(posedge aclk) begin
+    if (!aresetn) begin
       int_wr_pend <= 1'b0;
     end else if (int_wr_req && int_wr_ack && b_valid) begin
       int_wr_pend <= 1'b1;
@@ -398,8 +399,8 @@ module axi4l_int #(
     end
   end
 
-  always @(posedge s_axi_aclk) begin
-    if (~s_axi_aresetn) begin
+  always @(posedge aclk) begin
+    if (!aresetn) begin
       int_rd_req <= 1'b0;
     end else if (~int_rd_req && ~(aw_req && w_req) && ar_req) begin
       int_rd_req <= 1'b1;
@@ -410,8 +411,8 @@ module axi4l_int #(
     end
   end
 
-  always @(posedge s_axi_aclk) begin
-    if (~s_axi_aresetn) begin
+  always @(posedge aclk) begin
+    if (!aresetn) begin
       int_rd_pend <= 1'b0;
     end else if (int_rd_req && int_rd_ack && r_valid) begin
       int_rd_pend <= 1'b1;
