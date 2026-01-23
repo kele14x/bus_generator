@@ -172,7 +172,7 @@ async def model(dut):
 
 
 @cocotb.test()
-async def test_axi4l_int_simple_write(dut):
+async def test_axi4l_int_simple_one_write(dut):
     # Start clock and model
     Clock(dut.s_axi_aclk, 10, unit="ns").start()
     cocotb.start_soon(model(dut))
@@ -185,6 +185,26 @@ async def test_axi4l_int_simple_write(dut):
     test_data = 0xDEADBEEF
     bresp = await axi_write(dut, test_addr, test_data)
     assert bresp == 0, f"AXI write response error: bresp={bresp}"
+
+    # Recovery
+    await ClockCycles(dut.s_axi_aclk, 10)
+
+
+@cocotb.test()
+async def test_axi4l_int_simple_b2b_write(dut):
+    # Start clock and model
+    Clock(dut.s_axi_aclk, 10, unit="ns").start()
+    cocotb.start_soon(model(dut))
+
+    # Reset DUT
+    await reset_dut(dut)
+
+    # Simple write test
+    for i in range(5):
+        test_addr = 0x04 + i * 4
+        test_data = 0xDEADBEEF + i
+        bresp = await axi_write(dut, test_addr, test_data)
+        assert bresp == 0, f"AXI write response error: bresp={bresp}"
 
     # Recovery
     await ClockCycles(dut.s_axi_aclk, 10)
