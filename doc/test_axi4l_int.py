@@ -38,86 +38,103 @@ async def reset_dut(dut):
     await ClockCycles(dut.s_axi_aclk, 10)
 
 
-async def axi_aw(dut, addr: int):
-    dut.s_axi_awaddr.value = addr
-    # dut.s_axi_awprot.value = 0
-    dut.s_axi_awvalid.value = 1
-    for t in range(AXI_TIMEOUT_CYCLES):
-        await RisingEdge(dut.s_axi_aclk)
-        if int(dut.s_axi_awready.value):
-            break
-        elif t == AXI_TIMEOUT_CYCLES - 1:
-            raise TimeoutError("AXI AW handshake timeout")
+async def axi_aw(dut, addr: int | list[int]):
+    if isinstance(addr, int):
+        addr = [addr]
+    for a in addr:
+        dut.s_axi_awaddr.value = a
+        dut.s_axi_awvalid.value = 1
+        for t in range(AXI_TIMEOUT_CYCLES):
+            await RisingEdge(dut.s_axi_aclk)
+            if int(dut.s_axi_awready.value):
+                break
+            elif t == AXI_TIMEOUT_CYCLES - 1:
+                raise TimeoutError("AXI AW handshake timeout")
     dut.s_axi_awvalid.value = 0
 
 
-async def axi_w(dut, data: int):
-    dut.s_axi_wdata.value = data
-    dut.s_axi_wstrb.value = (2 ** (DATA_WIDTH // 8)) - 1
-    dut.s_axi_wvalid.value = 1
-    for t in range(AXI_TIMEOUT_CYCLES):
-        await RisingEdge(dut.s_axi_aclk)
-        if int(dut.s_axi_wready.value):
-            break
-        elif t == AXI_TIMEOUT_CYCLES - 1:
-            raise TimeoutError("AXI W handshake timeout")
+async def axi_w(dut, data: int | list[int]):
+    if isinstance(data, int):
+        data = [data]
+    for d in data:
+        dut.s_axi_wdata.value = d
+        dut.s_axi_wstrb.value = (2 ** (DATA_WIDTH // 8)) - 1
+        dut.s_axi_wvalid.value = 1
+        for t in range(AXI_TIMEOUT_CYCLES):
+            await RisingEdge(dut.s_axi_aclk)
+            if int(dut.s_axi_wready.value):
+                break
+            elif t == AXI_TIMEOUT_CYCLES - 1:
+                raise TimeoutError("AXI W handshake timeout")
     dut.s_axi_wvalid.value = 0
 
 
-async def axi_b(dut) -> int:
-    dut.s_axi_bready.value = 1
-    bresp = 0
-    for t in range(AXI_TIMEOUT_CYCLES):
-        await RisingEdge(dut.s_axi_aclk)
-        if int(dut.s_axi_bvalid.value):
-            bresp = int(dut.s_axi_bresp.value)
-            break
-        elif t == AXI_TIMEOUT_CYCLES - 1:
-            raise TimeoutError("AXI B handshake timeout")
+async def axi_b(dut, n: int = 1) -> int | list[int]:
+    bresp = []
+    for i in range(n):
+        dut.s_axi_bready.value = 1
+        for t in range(AXI_TIMEOUT_CYCLES):
+            await RisingEdge(dut.s_axi_aclk)
+            if int(dut.s_axi_bvalid.value):
+                bresp.append(int(dut.s_axi_bresp.value))
+                break
+            elif t == AXI_TIMEOUT_CYCLES - 1:
+                raise TimeoutError("AXI B handshake timeout")
     dut.s_axi_bready.value = 0
-    return bresp
+    return bresp[0] if n == 1 else bresp
 
 
-async def axi_ar(dut, addr: int):
-    dut.s_axi_araddr.value = addr
-    # dut.s_axi_arprot.value = 0
-    dut.s_axi_arvalid.value = 1
-    for t in range(AXI_TIMEOUT_CYCLES):
-        await RisingEdge(dut.s_axi_aclk)
-        if int(dut.s_axi_arready.value):
-            break
-        elif t == AXI_TIMEOUT_CYCLES - 1:
-            raise TimeoutError("AXI AR handshake timeout")
+async def axi_ar(dut, addr: int | list[int]):
+    if isinstance(addr, int):
+        addr = [addr]
+    for a in addr:
+        dut.s_axi_araddr.value = a
+        dut.s_axi_arvalid.value = 1
+        for t in range(AXI_TIMEOUT_CYCLES):
+            await RisingEdge(dut.s_axi_aclk)
+            if int(dut.s_axi_arready.value):
+                break
+            elif t == AXI_TIMEOUT_CYCLES - 1:
+                raise TimeoutError("AXI AR handshake timeout")
     dut.s_axi_arvalid.value = 0
 
 
-async def axi_r(dut) -> tuple:
-    dut.s_axi_rready.value = 1
-    rdata = 0
-    rresp = 0
-    for t in range(AXI_TIMEOUT_CYCLES):
-        await RisingEdge(dut.s_axi_aclk)
-        if int(dut.s_axi_rvalid.value):
-            rdata = int(dut.s_axi_rdata.value)
-            rresp = int(dut.s_axi_rresp.value)
-            break
-        elif t == AXI_TIMEOUT_CYCLES - 1:
-            raise TimeoutError("AXI R handshake timeout")
+async def axi_r(dut, n: int = 1) -> tuple[int, int] | list[tuple[int, int]]:
+    res = []
+    for i in range(n):
+        dut.s_axi_rready.value = 1
+        for t in range(AXI_TIMEOUT_CYCLES):
+            await RisingEdge(dut.s_axi_aclk)
+            if int(dut.s_axi_rvalid.value):
+                rdata = int(dut.s_axi_rdata.value)
+                rresp = int(dut.s_axi_rresp.value)
+                res.append((rdata, rresp))
+                break
+            elif t == AXI_TIMEOUT_CYCLES - 1:
+                raise TimeoutError("AXI R handshake timeout")
     dut.s_axi_rready.value = 0
-    return rdata, rresp
+    return res[0] if n == 1 else res
 
 
-async def axi_write(dut, addr: int, data: int) -> int:
+async def axi_write(
+    dut, addr: int | list[int], data: int | list[int]
+) -> int | list[int]:
+    data_len = 1 if isinstance(data, int) else len(data)
+    addr_len = 1 if isinstance(addr, int) else len(addr)
+    assert addr_len == data_len, "Address and data length mismatch"
     aw = cocotb.start_soon(axi_aw(dut, addr))
     w = cocotb.start_soon(axi_w(dut, data))
-    b = cocotb.start_soon(axi_b(dut))
+    b = cocotb.start_soon(axi_b(dut, addr_len))
     await Combine(aw, w, b)
     return b.result()
 
 
-async def axi_read(dut, addr: int) -> Tuple[int, int]:
+async def axi_read(
+    dut, addr: int | list[int]
+) -> tuple[int, int] | list[tuple[int, int]]:
+    addr_len = 1 if isinstance(addr, int) else len(addr)
     ar = cocotb.start_soon(axi_ar(dut, addr))
-    r = cocotb.start_soon(axi_r(dut))
+    r = cocotb.start_soon(axi_r(dut, addr_len))
     await Combine(ar, r)
     return r.result()
 
@@ -200,11 +217,11 @@ async def test_axi4l_int_simple_b2b_write(dut):
     await reset_dut(dut)
 
     # Simple write test
-    for i in range(5):
-        test_addr = 0x04 + i * 4
-        test_data = 0xDEADBEEF + i
-        bresp = await axi_write(dut, test_addr, test_data)
-        assert bresp == 0, f"AXI write response error: bresp={bresp}"
+    test_addr = [0x04 + i * 4 for i in range(5)]
+    test_data = [0xDEADBEEF + i for i in range(5)]
+    bresp = await axi_write(dut, test_addr, test_data)
+    assert isinstance(bresp, list), "AXI write response should be a list"
+    assert all(b == 0 for b in bresp), f"AXI write response error: bresp={bresp}"
 
     # Recovery
     await ClockCycles(dut.s_axi_aclk, 10)
