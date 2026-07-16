@@ -1,127 +1,38 @@
 addrmap gpio {
-    name = "GPIO";
+    name = "Generic MMIO GPIO";
+    desc = "Basic memory-mapped GPIO controller matching the Linux
+    basic-mmio-gpio driver (drivers/gpio/gpio-mmio.c). A data register
+    drives/samples the pins and a direction register selects in/out.";
 
     default sw = rw;
     default hw = r;
 
     reg {
-        name = "GPIO_DATA";
-        desc = "Channel 1 AXI GPIO Data Register.";
+        name = "DATA";
+        desc = "GPIO data register.
+        Read: returns the current level of each pin.
+        Write: drives the value onto pins configured as outputs.";
 
         field {
-            name = "GPIO_DATA";
-            desc = "For each I/O bit programmed as input:
-              R: Reads value on the input pin
-              W: No effect
-            For each I/O bit programmed as output:
-              R: Reads to these bits always retune zeros
-              W: Writes value to the corresponding AXI GPIO data register bit
-            and output pin";
+            name = "DATA";
+            desc = "One bit per GPIO line.";
 
             sw = rw;
             hw = rw;
-        } gpio_data[31:0] = 0x0;
-    } gpio_data @ 0x0;
+        } data[31:0] = 0x0;
+    } data @ 0x0;
 
     reg {
-        name = "GPIO_TRI";
-        desc = "Channel 1 AXI GPIO 3-state Control Registers.";
+        name = "DIRECTION";
+        desc = "GPIO direction register.
+        0 = pin is an input, 1 = pin is an output.";
 
         field {
-            name = "GPIO_TRI";
-            desc = "Each I/O pin of the AXI GPIO is individually programmable
-            as an input or output. For each of the bits:
-            0 = I/O pin configured as output
-            1 = I/O pin configured as input";
-        } gpio_tri[31:0] = 0x0;
-    } gpio_tri @ 0x4;
-
-    reg {
-        name = "GPIO2_DATA";
-        desc = "Channel 2 AXI GPIO Data Register.";
-
-        field {
-            name = "GPIO2_DATA";
-            desc = "For each I/O bit programmed as input:
-              R: Reads value on the input pin
-              W: No effect
-            For each I/O bit programmed as output:
-              R: Reads to these bits always retune zeros
-              W: Writes value to the corresponding AXI GPIO data register bit
-            and output pin";
+            name = "DIRECTION";
+            desc = "One bit per GPIO line: 0 = input, 1 = output.";
 
             sw = rw;
-            hw = rw;
-        } gpio2_data[31:0] = 0x0;
-    } gpio2_data @ 0x8;
-
-    reg {
-        name = "GPIO2_TRI";
-        desc = "Channel 2 AXI GPIO 3-state Control Registers.";
-
-        field {
-            name = "GPIO2_TRI";
-            desc = "Each I/O pin of the AXI GPIO is individually programmable
-            as an input or output. For each of the bits:
-            0 = I/O pin configured as output
-            1 = I/O pin configured as input";
-        } gpio2_tri[31:0] = 0x0;
-    } gpio2_tri @ 0xC;
-
-    reg {
-        name = "GIER";
-        desc = "Global Interrupt Enable Register.";
-
-        field {
-            name = "Global Interrupt Enable";
-            desc = "Master enable for the device interrupt output to the system
-            interrupt controller:
-            0 = Disable
-            1 = Enable";
-        } gie[31:31] = 0x0;
-    } gier @ 0x11C;
-
-    reg {
-        name = "IP IER";
-        desc = "IP Interrupt Enable Register.";
-
-        field {
-            name = "Channel 2 Interrupt Enable";
-            desc = "Enable Channel 2 Interrupt:
-            0 = Disable (masked)
-            1 = Enable";
-        } ier2[2:2] = 0x0;
-
-        field {
-            name = "Channel 1 Interrupt Enable";
-            desc = "Enable Channel 1 Interrupt:
-            0 = Disable (masked)
-            1 = Enable";
-        } ier[1:1] = 0x0;
-    } ier @ 0x128;
-
-    reg {
-        name = "IP ISR";
-        desc = "IP Interrupt Status Register.";
-
-        field {
-            name = "Channel 2 Interrupt Status";
-            desc = "Channel 2 Interrupt Status:
-            0 = No Channel 2 input interrupt
-            1 = Channel 2 input interrupt";
-
-            sw = r;
-            hw = w;
-        } isr2[1:1] = 0x0;
-
-        field {
-            name = "Channel 1 Interrupt Status";
-            desc = "Channel 1 Interrupt Status:
-            0 = No Channel 1 input interrupt
-            1 = Channel 1 input interrupt";
-
-            sw = r;
-            hw = w;
-        } isr[0:0] = 0x0;
-    } isr @ 0x120;
+            hw = r;
+        } direction[31:0] = 0x0;
+    } direction @ 0x4;
 };

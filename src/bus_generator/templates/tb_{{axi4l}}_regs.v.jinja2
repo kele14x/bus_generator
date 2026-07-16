@@ -54,6 +54,8 @@ module tb_{{ top_name }}_regs;
     reg         {{ mem.name }}_valid;
     {%- endfor %}
 
+    integer errors;
+
     task axi_reset();
         begin
             s_axi_awaddr  <= 0;
@@ -172,6 +174,27 @@ module tb_{{ top_name }}_regs;
         end
     endtask
 
+    task check_resp(input reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr,
+                    input reg [ 1:0] resp);
+        begin
+            if (resp !== 2'b00) begin
+                errors = errors + 1;
+                $display("FAIL: addr = %x unexpected resp = %b", addr, resp);
+            end
+        end
+    endtask
+
+    task check_data(input reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr,
+                    input reg [{{ '{:2d}'.format(data_width-1) }}:0] got,
+                    input reg [{{ '{:2d}'.format(data_width-1) }}:0] exp);
+        begin
+            if (got !== exp) begin
+                errors = errors + 1;
+                $display("FAIL: addr = %x data got = %x exp = %x", addr, got, exp);
+            end
+        end
+    endtask
+
 
     // DUT
 
@@ -236,6 +259,7 @@ module tb_{{ top_name }}_regs;
     // {{ mem.hierarchy }}
 
     reg [31:0] {{ mem.name}}_mem [0:{{ mem.mementries }}];
+    reg [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name}}_exp [0:{{ mem.mementries }}];
 
     always @(posedge s_axi_aclk) begin
         if ({{ mem.name}}_en == 1'b1) begin
@@ -268,9 +292,12 @@ module tb_{{ top_name }}_regs;
 
     initial begin : p_stimu
         reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr;
-        reg [{{ '{:2d}'.format(data_width-1) }}:0] data;
+        reg [{{ '{:2d}'.format(data_width-1) }}:0] wdata;
+        reg [{{ '{:2d}'.format(data_width-1) }}:0] rdata;
         reg [ 1:0] resp;
         integer i;
+
+        errors = 0;
 
         // Wait reset done
         axi_reset();
@@ -284,13 +311,26 @@ module tb_{{ top_name }}_regs;
         addr = 'h{{ '{:x}'.format(field.address) }};
             {%- if field.is_hw_writable %}
         {{ field.name }}_in <= $urandom();
+        @(posedge s_axi_aclk);
             {%- endif %}
             {%- if field.is_sw_writable %}
-        data = $urandom();
-        axi_write(addr, data, resp);
+        wdata = $urandom();
+        axi_write(addr, wdata, resp);
+        check_resp(addr, resp);
             {%- endif %}
             {%- if field.is_sw_readable %}
-        axi_read(addr, data, resp);
+        axi_read(addr, rdata, resp);
+        check_resp(addr, resp);
+                {%- if field.is_hw_writable %}
+        check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
+                   ({{ data_width }}'({{ field.name }}_in) << {{ field.lsb }}) & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
+                {%- elif field.is_sw_writable %}
+        check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
+                   wdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
+                {%- else %}
+        check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
+                   ({{ data_width }}'h{{ '{:x}'.format(field.reset) }} << {{ field.lsb }}) & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
+                {%- endif %}
             {%- endif %}
         {%- endfor %}
         {%- for mem in mems %}
@@ -299,21 +339,31 @@ module tb_{{ top_name }}_regs;
             {%- if mem.is_sw_writable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
             addr = ('h{{ '{:x}'.format(mem.address) }} + i * 4);
-            data = $urandom();
-            axi_write(addr, data, resp);
+            wdata = $urandom();
+            {{ mem.name }}_exp[i] = wdata[{{ mem.width-1 }}:0];
+            axi_write(addr, wdata, resp);
+            check_resp(addr, resp);
         end
             {%- endif %}
             {%- if mem.is_sw_readable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
             addr = ('h{{ '{:x}'.format(mem.address) }} + i * 4);
-            axi_read(addr, data, resp);
+            axi_read(addr, rdata, resp);
+            check_resp(addr, resp);
+                {%- if mem.is_sw_writable %}
+            check_data(addr, rdata[{{ mem.width-1 }}:0], {{ mem.name }}_exp[i]);
+                {%- endif %}
         end
             {%- endif %}
-
-
         {%- endfor %}
         #1000;
-        $finish;
+        if (errors == 0) begin
+            $display("TEST PASSED");
+            $finish;
+        end else begin
+            $display("TEST FAILED: %0d error(s)", errors);
+            $fatal(1);
+        end
     end
 
 endmodule
