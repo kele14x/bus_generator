@@ -22,11 +22,12 @@ Python 3.13 and [uv](https://docs.astral.sh/uv/). Runtime and dev dependencies a
 uv run bus-generator <input_files> -o <output_dir>
 ```
 
-By default the AXI4-Lite register block template is rendered. Select other
-templates with `-t` (omit the `.jinja2` suffix), e.g.:
+By default the AXI4-Lite register block template (`axi4l`) is rendered. Select
+one or more templates by alias with `-t`. Available aliases: `axi4l`,
+`avalon_mm`, `c_header`, `tb_axi4l`. For example:
 
 ```bash
-uv run bus-generator gpio.rdl -o out -t {{axi4l}}_regs.v {{c_header}}.h
+uv run bus-generator gpio.rdl -o out -t axi4l c_header
 ```
 
 ## Testing

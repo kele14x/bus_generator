@@ -38,6 +38,26 @@ except subprocess.SubprocessError:
 DATA_WIDTH = 32
 ADDR_WIDTH_LSB = 2
 
+TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
+
+
+def discover_templates() -> dict:
+    """Map a friendly alias to each template stem in TEMPLATES_DIR.
+
+    The alias is the prefix before the first ``{{...}}`` plus the label
+    inside the braces, e.g. ``{{axi4l}}_regs.v`` -> ``axi4l`` and
+    ``tb_{{axi4l}}_regs.v`` -> ``tb_axi4l``.
+    """
+    templates = {}
+    for entry in sorted(os.listdir(TEMPLATES_DIR)):
+        if not entry.endswith(".jinja2"):
+            continue
+        stem = entry[: -len(".jinja2")]
+        match = re.match(r"(?P<prefix>.*?)\{\{(?P<label>[^}]+)\}\}", stem)
+        alias = (match["prefix"] + match["label"]) if match else stem
+        templates[alias] = stem
+    return templates
+
 
 class GeneralListener(RDLListener):
     """General walker listener."""
@@ -193,11 +213,14 @@ def parse_arguments(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "-p", "--print", help="print model hierarchy", action="store_true"
     )
+    template_aliases = list(discover_templates())
     parser.add_argument(
         "-t",
         "--templates",
-        help="specify the template file(s)",
-        default=["{{axi4l}}_regs.v"],
+        help="template(s) to render (choices: %(choices)s)",
+        choices=template_aliases,
+        default=["axi4l"],
+        metavar="TEMPLATE",
         nargs="+",
     )
     parser.add_argument("-o", "--output", help="write output to specified folder")
@@ -260,7 +283,7 @@ def convert(top: AddrmapNode, template_name: str):
 
     # Get Jinja2 Environment
     env = Environment(
-        loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), "templates")),
+        loader=FileSystemLoader(TEMPLATES_DIR),
         newline_sequence="\n",
         autoescape=False,
         keep_trailing_newline=True,
@@ -341,10 +364,12 @@ def cli(argv=None):
         print_hierarchy(top)
 
     # Render template
-    for template in args.templates:
+    templates = discover_templates()
+    for alias in args.templates:
+        stem = templates[alias]
         # Export a implementation
-        content = convert(top, template_name=template + ".jinja2")
-        name = re.sub(r"{{.*}}", root.top.inst_name, template)
+        content = convert(top, template_name=stem + ".jinja2")
+        name = re.sub(r"{{.*}}", root.top.inst_name, stem)
         if args.output is not None:
             write_file(args.output, content, name)
 
