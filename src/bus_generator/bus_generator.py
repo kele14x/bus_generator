@@ -34,6 +34,10 @@ try:
 except subprocess.SubprocessError:
     __version__ = "unknown"
 
+# AXI4-Lite bus geometry assumed by the generated Verilog.
+DATA_WIDTH = 32
+ADDR_WIDTH_LSB = 2
+
 
 class GeneralListener(RDLListener):
     """General walker listener."""
@@ -42,7 +46,7 @@ class GeneralListener(RDLListener):
         self._address = 0
         self._path = []
         self._addr_width = 1
-        self._data_width = 32
+        self._data_width = DATA_WIDTH
 
     def enter_Component(self, node: Node):
         if isinstance(node, AddrmapNode):
@@ -231,14 +235,14 @@ def parse_arguments(argv=None) -> argparse.Namespace:
     return args
 
 
-def print_hierarchy(rdlc: RDLCompiler, top: AddrmapNode):
+def print_hierarchy(top: AddrmapNode):
     """Print compiled hierarchy for node."""
     walker = RDLWalker(unroll=True)
     listener = ModelPrintingListener()
     walker.walk(top, listener)
 
 
-def convert(rdlc: RDLCompiler, top: AddrmapNode, template: str):
+def convert(top: AddrmapNode, template_name: str):
     """Convert compiled node hierarchy to generator friendly format."""
     walker = RDLWalker(unroll=True)
 
@@ -263,13 +267,13 @@ def convert(rdlc: RDLCompiler, top: AddrmapNode, template: str):
     )
 
     # Render and write target files
-    template = env.get_template(template)
+    template = env.get_template(template_name)
     content = template.render(
         {
             "top_name": top.inst_name,
             "addr_width": ceil(log2(top.total_size)),
-            "addr_width_lsb": 2,
-            "data_width": 32,
+            "addr_width_lsb": ADDR_WIDTH_LSB,
+            "data_width": DATA_WIDTH,
             "fields": fields,
             "regs": regs,
             "mems": mems,
@@ -334,12 +338,12 @@ def cli(argv=None):
 
     # Print
     if args.print:
-        print_hierarchy(rdlc, top)
+        print_hierarchy(top)
 
     # Render template
     for template in args.templates:
         # Export a implementation
-        content = convert(rdlc, top, template=template + ".jinja2")
+        content = convert(top, template_name=template + ".jinja2")
         name = re.sub(r"{{.*}}", root.top.inst_name, template)
         if args.output is not None:
             write_file(args.output, content, name)

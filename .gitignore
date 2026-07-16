@@ -6,6 +6,7 @@
 # IDE
 .idea/
 .vscode/
+.qoder/
 
 # Python
 __pycache__/

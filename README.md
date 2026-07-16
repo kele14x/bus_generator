@@ -4,32 +4,33 @@
 
 ## Dependency
 
-Python3 and some packages (see **requirements.txt**).
+Python 3.13 and [uv](https://docs.astral.sh/uv/). Runtime and dev dependencies are declared in `pyproject.toml`.
 
 ## Installation
 
-1. Install [Python3](https://www.python.org/downloads/).
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-2. (Optional) Create a virtual environment:
-
-    ```bash
-    python -m venv venv
-    ```
-
-3. (Optinal) Active the virtual environment:
+2. Sync the environment (creates `.venv` and installs everything):
 
     ```bash
-    . .\\venv\\Scripts\\Activate.ps1
-    ```
-
-4. Install required package from [PyPi](https://pypi.org/) using:
-
-    ```bash
-    python -m pip install -r requirements.txt
+    uv sync
     ```
 
 ## Usage
 
 ```bash
-python bus_generator.py <input_files> -o <output_dir>
+uv run bus-generator <input_files> -o <output_dir>
+```
+
+By default the AXI4-Lite register block template is rendered. Select other
+templates with `-t` (omit the `.jinja2` suffix), e.g.:
+
+```bash
+uv run bus-generator gpio.rdl -o out -t {{axi4l}}_regs.v {{c_header}}.h
+```
+
+## Testing
+
+```bash
+uv run pytest
 ```

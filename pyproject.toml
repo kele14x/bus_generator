@@ -1,7 +1,7 @@
 [project]
 name = "bus-generator"
 version = "0.1.0"
-description = "Add your description here"
+description = "Generate a Verilog AXI slave CSR block from SystemRDL"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
@@ -13,7 +13,7 @@ dependencies = [
 bus-generator = "bus_generator:main"
 
 [build-system]
-requires = ["uv_build>=0.9.26,<0.10.0"]
+requires = ["uv_build>=0.9.26,<0.12.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
