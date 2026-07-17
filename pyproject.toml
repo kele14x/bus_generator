@@ -21,3 +21,8 @@ dev = [
     "cocotb>=2.0.1",
     "pytest>=9.0.2",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "sim: RTL simulation tests (slow, needs iverilog)",
+]
