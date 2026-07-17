@@ -1,0 +1,88 @@
+addrmap simple {
+    name = "Simple 16 RW Registers";
+    desc = "Minimal address map with 16 word-aligned read/write registers,
+    used to exercise the generated register block RTL.";
+
+    default sw = rw;
+    default hw = r;
+
+    reg {
+        name = "Register 0";
+        field { name = "Register 0 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg0 @ 0x0;
+
+    reg {
+        name = "Register 1";
+        field { name = "Register 1 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg1 @ 0x4;
+
+    reg {
+        name = "Register 2";
+        field { name = "Register 2 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg2 @ 0x8;
+
+    reg {
+        name = "Register 3";
+        field { name = "Register 3 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg3 @ 0xC;
+
+    reg {
+        name = "Register 4";
+        field { name = "Register 4 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg4 @ 0x10;
+
+    reg {
+        name = "Register 5";
+        field { name = "Register 5 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg5 @ 0x14;
+
+    reg {
+        name = "Register 6";
+        field { name = "Register 6 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg6 @ 0x18;
+
+    reg {
+        name = "Register 7";
+        field { name = "Register 7 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg7 @ 0x1C;
+
+    reg {
+        name = "Register 8";
+        field { name = "Register 8 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg8 @ 0x20;
+
+    reg {
+        name = "Register 9";
+        field { name = "Register 9 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg9 @ 0x24;
+
+    reg {
+        name = "Register 10";
+        field { name = "Register 10 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg10 @ 0x28;
+
+    reg {
+        name = "Register 11";
+        field { name = "Register 11 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg11 @ 0x2C;
+
+    reg {
+        name = "Register 12";
+        field { name = "Register 12 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg12 @ 0x30;
+
+    reg {
+        name = "Register 13";
+        field { name = "Register 13 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg13 @ 0x34;
+
+    reg {
+        name = "Register 14";
+        field { name = "Register 14 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg14 @ 0x38;
+
+    reg {
+        name = "Register 15";
+        field { name = "Register 15 Field"; sw = rw; hw = r; } field0[31:0] = 0x0;
+    } reg15 @ 0x3C;
+};

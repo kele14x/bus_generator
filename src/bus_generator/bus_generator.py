@@ -320,7 +320,7 @@ def write_file(output_dir, content, name):
     target_file = os.path.join(output_dir, name)
 
     if os.path.isfile(target_file):
-        logging.warning(f'File "{target_file}" already exists, it will be overwrite.')
+        logging.info(f'File "{target_file}" already exists, it will be overwrite.')
     elif os.path.exists(target_file):
         logging.error(
             f'File "{target_file}" already exists but is not a regular file, abort.'
