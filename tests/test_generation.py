@@ -10,6 +10,7 @@ from bus_generator import main
 SAMPLES = [
     pytest.param("tests/gpio.rdl", "gpio", id="gpio"),
     pytest.param("tests/ram.rdl", "ram", id="ram"),
+    pytest.param("tests/simple.rdl", "simple", id="simple"),
 ]
 
 # alias -> (output filename relative to out dir, substrings the file must contain)

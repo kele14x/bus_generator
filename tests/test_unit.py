@@ -16,6 +16,7 @@ from systemrdl import RDLCompiler, RDLWalker
 
 GPIO_RDL = "tests/gpio.rdl"
 RAM_RDL = "tests/ram.rdl"
+SIMPLE_RDL = "tests/simple.rdl"
 
 
 def _compile(rdl_path):
@@ -165,11 +166,53 @@ def test_ram_mems(ram_top):
 
 
 # ---------------------------------------------------------------------------
+# Listeners on simple.rdl
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def simple_top():
+    return _compile(SIMPLE_RDL)
+
+
+def test_simple_fields(simple_top):
+    fields = _gather(simple_top, FieldsGatheringListener).fields
+    assert len(fields) == 16
+    assert [f["name"] for f in fields] == [f"reg{i}_field0" for i in range(16)]
+    assert [f["address"] for f in fields] == [i * 4 for i in range(16)]
+    for field in fields:
+        assert field["low"] == 0 and field["high"] == 31
+        assert field["mask"] == 0xFFFFFFFF
+        assert field["is_sw_writable"] and field["is_sw_readable"]
+        assert not field["is_hw_writable"] and field["is_hw_readable"]
+
+
+def test_simple_regs(simple_top):
+    regs = _gather(simple_top, RegistersGatheringListener).regs
+    assert len(regs) == 16
+    assert [r["name"] for r in regs] == [f"reg{i}" for i in range(16)]
+    assert [r["address"] for r in regs] == [i * 4 for i in range(16)]
+
+
+def test_simple_no_mems(simple_top):
+    mems = _gather(simple_top, MemGatheringListener).mems
+    assert mems == []
+
+
+# ---------------------------------------------------------------------------
 # convert() rendered content
 # ---------------------------------------------------------------------------
 
 
-def test_convert_gpio_renders_module(gpio_top):
-    content = convert(gpio_top, "{{axi4l}}_regs.v.jinja2")
-    assert "module gpio_regs (" in content
+@pytest.mark.parametrize(
+    "rdl_path,top_name",
+    [
+        pytest.param(GPIO_RDL, "gpio", id="gpio"),
+        pytest.param(RAM_RDL, "ram", id="ram"),
+        pytest.param(SIMPLE_RDL, "simple", id="simple"),
+    ],
+)
+def test_convert_renders_module(rdl_path, top_name):
+    content = convert(_compile(rdl_path), "{{axi4l}}_regs.v.jinja2")
+    assert f"module {top_name}_regs (" in content
     assert "s_axi_awaddr" in content

@@ -6,42 +6,49 @@ GENERATED := generated
 SAMPLES := gpio ram simple
 TEMPLATES := axi4l c_header tb_axi4l
 
-.PHONY: all test unit gen sim stress fast clean
+AXI4L_ARTIFACTS := $(addprefix $(GENERATED)/axi4l/,$(addsuffix _regs.v,$(SAMPLES)))
+C_HEADER_ARTIFACTS := $(addprefix $(GENERATED)/c_header/,$(addsuffix .h,$(SAMPLES)))
+TB_AXI4L_ARTIFACTS := $(addprefix $(GENERATED)/tb_axi4l/tb_,$(addsuffix _regs.v,$(SAMPLES)))
+ARTIFACTS := $(AXI4L_ARTIFACTS) $(C_HEADER_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
+
+.PHONY: all test unit artifacts gen sim stress fast clean
 
 # Run every test layer (unit + generation + simulation).
-all test:
-	$(PYTEST)
+all test: unit gen sim
 
 # Pure-Python unit tests (CLI, listeners, discover_templates, convert).
 unit:
 	$(PYTEST) tests/test_unit.py
 
-# Render every sample x template into ./generated/<template>/ for reuse,
-# then run the generation tests (which render to an isolated tmp dir for
-# content checks). Per-template subdirs keep reusable artifacts organized.
-gen:
-	@for t in $(TEMPLATES); do mkdir -p $(GENERATED)/$$t; done
-	@for rdl in $(SAMPLES); do \
-	  for t in $(TEMPLATES); do \
-	    uv run bus-generator tests/$$rdl.rdl -o $(GENERATED)/$$t -t $$t; \
-	  done; \
-	done
+# Render every sample x template into ./generated/<template>/ for reuse.
+artifacts: $(ARTIFACTS)
+
+$(GENERATED)/axi4l/%_regs.v: tests/%.rdl
+	@mkdir -p $(@D)
+	uv run bus-generator $< -o $(@D) -t axi4l
+
+$(GENERATED)/c_header/%.h: tests/%.rdl
+	@mkdir -p $(@D)
+	uv run bus-generator $< -o $(@D) -t c_header
+
+$(GENERATED)/tb_axi4l/tb_%_regs.v: tests/%.rdl
+	@mkdir -p $(@D)
+	uv run bus-generator $< -o $(@D) -t tb_axi4l
+
+# Render reusable artifacts, then run isolated generation content checks.
+gen: artifacts
 	$(PYTEST) tests/test_generation.py
 
-# All sim-marked tests (self-checking TBs + cocotb random stress) against the
-# reusable generated/ artifacts (no regeneration — manual edits survive).
-# Prerequisite: run `make gen` first. Skipped if iverilog/vvp missing or no
-# artifacts.
-sim:
+# All sim-marked tests against reusable generated/ artifacts.
+sim: $(AXI4L_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 	$(PYTEST) -m sim
 
 # Cocotb random AXI4-Lite stress test only (overrides STRESS_COUNT for a soak).
-stress:
+stress: $(GENERATED)/axi4l/simple_regs.v
 	$(PYTEST) tests/test_stress.py
 
 # Unit + generation only (fast path, no simulator needed).
-fast:
-	$(PYTEST) -m "not sim"
+fast: unit gen
 
 # Remove generated/local artifacts: bytecode caches, pytest cache, sim build
 # dirs, reusable generated output, and stray cocotb result XML files.

@@ -317,7 +317,7 @@ async def stress_b_backpressure(dut):
     )
 
 
-def _run_cocotb_test(testcase, tmp_path):
+def _run_cocotb_test(testcase):
     if not shutil.which("iverilog") or not shutil.which("vvp"):
         pytest.skip("iverilog/vvp not installed")
     pytest.importorskip("cocotb_tools.runner")
@@ -334,13 +334,11 @@ def _run_cocotb_test(testcase, tmp_path):
     runner.build(
         sources=[str(dut)],
         hdl_toplevel="simple_regs",
-        build_dir=str(tmp_path),
         always=True,
     )
     runner.test(
         test_module="test_stress",
         hdl_toplevel="simple_regs",
-        build_dir=str(tmp_path),
         test_dir=str(TESTS_DIR),
         testcase=testcase,
         seed=0xC0FFEE,
@@ -348,10 +346,10 @@ def _run_cocotb_test(testcase, tmp_path):
 
 
 @pytest.mark.sim
-def test_stress_axi4l_simple(tmp_path):
-    _run_cocotb_test("stress_random_axi", tmp_path)
+def test_stress_axi4l_simple():
+    _run_cocotb_test("stress_random_axi")
 
 
 @pytest.mark.sim
-def test_stress_b_backpressure(tmp_path):
-    _run_cocotb_test("stress_b_backpressure", tmp_path)
+def test_stress_b_backpressure():
+    _run_cocotb_test("stress_b_backpressure")
