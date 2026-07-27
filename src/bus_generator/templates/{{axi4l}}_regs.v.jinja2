@@ -119,6 +119,7 @@ module {{ top_name }}_regs (
     wire        int_rd_en;
     wire        rd_mem_pending;
     wire        rd_mem_valid;
+    wire        rd_mem_issue;
     reg         int_wr_ack;
     reg         int_wr_err;
     reg         int_wr_err_next;
@@ -247,7 +248,7 @@ module {{ top_name }}_regs (
                 int_wr_err <= int_wr_err_next;
             end
 
-            int_rd_ack <= (issue_read && !rd_mem_pending) || (rd_mem_pending && rd_mem_valid);
+            int_rd_ack <= (issue_read && !rd_mem_pending && !rd_mem_issue) || (rd_mem_pending && rd_mem_valid);
             if (issue_read) begin
                 int_rd_err <= int_rd_err_next;
             end
@@ -368,6 +369,7 @@ module {{ top_name }}_regs (
 
     assign rd_mem_pending = 1'b0{% for mem in mems %}{% if mem.is_sw_readable %} || {{ mem.name }}_rd_sel{% endif %}{% endfor %};
     assign rd_mem_valid = 1'b0{% for mem in mems %}{% if mem.is_sw_readable %} || ({{ mem.name }}_rd_sel && {{ mem.name }}_valid){% endif %}{% endfor %};
+    assign rd_mem_issue = 1'b0{% for mem in mems %}{% if mem.is_sw_readable %} || (int_rd_en && {{ mem.name }}_strb){% endif %}{% endfor %};
 
     always @(*) begin
         int_wr_err_next = 1'b1;

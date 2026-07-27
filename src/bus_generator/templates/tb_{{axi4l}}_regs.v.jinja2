@@ -55,6 +55,7 @@ module tb_{{ top_name }}_regs;
     {%- endfor %}
 
     integer errors;
+    localparam integer MEMORY_READ_LATENCY = 3;
 
     task axi_reset();
         begin
@@ -260,10 +261,28 @@ module tb_{{ top_name }}_regs;
 
     reg [31:0] {{ mem.name}}_mem [0:{{ mem.mementries }}];
     reg [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name}}_exp [0:{{ mem.mementries }}];
+    reg [{{ '{:2d}'.format(mem.addr_width-1) }}:0] {{ mem.name}}_rd_addr_pipe [0:MEMORY_READ_LATENCY-1];
+    reg [MEMORY_READ_LATENCY-1:0] {{ mem.name}}_rd_valid_pipe;
+    integer {{ mem.name}}_rd_idx;
 
     always @(posedge s_axi_aclk) begin
-        if ({{ mem.name}}_en == 1'b1) begin
-            {{ mem.name }}_dout <= {{ mem.name}}_mem[{{ mem.name}}_addr];
+        if (s_axi_aresetn == 1'b0) begin
+            {{ mem.name }}_dout <= 0;
+            {{ mem.name }}_valid <= 0;
+            {{ mem.name}}_rd_valid_pipe <= 0;
+            for ({{ mem.name}}_rd_idx = 0; {{ mem.name}}_rd_idx < MEMORY_READ_LATENCY; {{ mem.name}}_rd_idx = {{ mem.name}}_rd_idx + 1) begin
+                {{ mem.name}}_rd_addr_pipe[{{ mem.name}}_rd_idx] <= 0;
+            end
+        end else begin
+            {{ mem.name}}_rd_valid_pipe <= { {{ mem.name}}_rd_valid_pipe[MEMORY_READ_LATENCY-2:0], {{ mem.name}}_en && !{{ mem.name}}_we };
+            {{ mem.name}}_rd_addr_pipe[0] <= {{ mem.name}}_addr;
+            for ({{ mem.name}}_rd_idx = 1; {{ mem.name}}_rd_idx < MEMORY_READ_LATENCY; {{ mem.name}}_rd_idx = {{ mem.name}}_rd_idx + 1) begin
+                {{ mem.name}}_rd_addr_pipe[{{ mem.name}}_rd_idx] <= {{ mem.name}}_rd_addr_pipe[{{ mem.name}}_rd_idx - 1];
+            end
+            {{ mem.name }}_valid <= {{ mem.name}}_rd_valid_pipe[MEMORY_READ_LATENCY-1];
+            if ({{ mem.name}}_rd_valid_pipe[MEMORY_READ_LATENCY-1]) begin
+                {{ mem.name }}_dout <= {{ mem.name}}_mem[{{ mem.name}}_rd_addr_pipe[MEMORY_READ_LATENCY-1]];
+            end
         end
     end
 
@@ -271,10 +290,6 @@ module tb_{{ top_name }}_regs;
         if ({{ mem.name}}_en == 1'b1 && {{ mem.name}}_we == 1'b1) begin
             {{ mem.name}}_mem[{{ mem.name}}_addr] <= {{ mem.name }}_din;
         end
-    end
-
-    always @(posedge s_axi_aclk) begin
-        {{ mem.name}}_valid <= {{ mem.name}}_en;
     end
 
     {%- endfor %}
