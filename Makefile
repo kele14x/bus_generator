@@ -43,8 +43,8 @@ gen: artifacts
 sim: $(AXI4L_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 	$(PYTEST) -m sim
 
-# Cocotb random AXI4-Lite stress test only (overrides STRESS_COUNT for a soak).
-stress: $(GENERATED)/axi4l/simple_regs.v
+# Cocotb random AXI4-Lite stress tests for all generated samples.
+stress: $(AXI4L_ARTIFACTS)
 	$(PYTEST) tests/test_stress.py
 
 # Unit + generation only (fast path, no simulator needed).
