@@ -4,13 +4,13 @@ This file provides guidance to the AI agent when working with code in this repos
 
 ## What this is
 
-A CLI that generates a Verilog AXI4-Lite / Avalon-MM CSR register block (and C header, testbench) from a SystemRDL source file. It walks the compiled RDL model with `RDLListener`/`RDLWalker`, gathers fields/regs/mems into dicts, then renders Jinja2 templates.
+A CLI that generates a Verilog AXI4-Lite CSR register block (and C header, testbench) from a SystemRDL source file. It walks the compiled RDL model with `RDLListener`/`RDLWalker`, gathers fields/regs/mems into dicts, then renders Jinja2 templates.
 
 ## Commands
 
 - Run: `uv run bus-generator <input.rdl> -o <output_dir> [-t <template_name>]`
 - Test: `uv run pytest`
-- Templates are selected by friendly alias via `-t`; default is `axi4l`. Available aliases: `axi4l`, `avalon_mm`, `c_header`, `tb_axi4l` (e.g. `-t axi4l c_header`).
+- Templates are selected by friendly alias via `-t`; default is `axi4l`. Available aliases: `axi4l`, `c_header`, `tb_axi4l` (e.g. `-t axi4l c_header`).
 
 ## Non-obvious details
 

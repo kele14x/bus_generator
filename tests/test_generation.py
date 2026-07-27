@@ -15,7 +15,6 @@ SAMPLES = [
 # alias -> (output filename relative to out dir, substrings the file must contain)
 EXPECTED = {
     "axi4l": (lambda top: f"{top}_regs.v", ["module {top}_regs ("]),
-    "avalon_mm": (lambda top: f"{top}_regs.v", ["module {top}_regs ("]),
     "c_header": (lambda top: f"{top}.h", ["#define"]),
     "tb_axi4l": (lambda top: f"tb_{top}_regs.v", ["TEST PASSED", "TEST FAILED"]),
 }

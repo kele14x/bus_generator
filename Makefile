@@ -4,7 +4,7 @@
 PYTEST := uv run pytest
 GENERATED := generated
 SAMPLES := gpio ram simple
-TEMPLATES := axi4l avalon_mm c_header tb_axi4l
+TEMPLATES := axi4l c_header tb_axi4l
 
 .PHONY: all test unit gen sim stress fast clean
 
@@ -18,8 +18,7 @@ unit:
 
 # Render every sample x template into ./generated/<template>/ for reuse,
 # then run the generation tests (which render to an isolated tmp dir for
-# content checks). Per-template subdirs avoid the axi4l/avalon_mm
-# <top>_regs.v filename collision.
+# content checks). Per-template subdirs keep reusable artifacts organized.
 gen:
 	@for t in $(TEMPLATES); do mkdir -p $(GENERATED)/$$t; done
 	@for rdl in $(SAMPLES); do \

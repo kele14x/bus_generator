@@ -38,10 +38,9 @@ def _gather(top, listener_cls):
 
 def test_discover_templates():
     templates = discover_templates()
-    assert set(templates) == {"axi4l", "avalon_mm", "c_header", "tb_axi4l"}
+    assert set(templates) == {"axi4l", "c_header", "tb_axi4l"}
     assert templates["axi4l"] == "{{axi4l}}_regs.v"
     assert templates["tb_axi4l"] == "tb_{{axi4l}}_regs.v"
-    assert templates["avalon_mm"] == "{{avalon_mm}}_regs.v"
     assert templates["c_header"] == "{{c_header}}.h"
 
 
