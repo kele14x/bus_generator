@@ -711,7 +711,6 @@ def _run_cocotb_test(top, testcase):
         runner.test(
             test_module="test_stress",
             hdl_toplevel=hdl_toplevel,
-            test_dir=str(TESTS_DIR),
             testcase=testcase,
             seed=0xC0FFEE,
         )
