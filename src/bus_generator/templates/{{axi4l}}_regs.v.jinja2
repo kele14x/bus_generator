@@ -295,7 +295,7 @@ module {{ top_name }}_regs (
 
             case ({wr_ack_fire, b_hsk})
                 2'b10: begin
-                    b_err_fifo[b_pending] <= int_wr_err;
+                    b_err_fifo[b_pending[4:0]] <= int_wr_err;
                     b_pending <= b_pending + 6'd1;
                 end
                 2'b01: begin
@@ -309,7 +309,7 @@ module {{ top_name }}_regs (
                     for (b_idx = 0; b_idx < 31; b_idx = b_idx + 1) begin
                         b_err_fifo[b_idx] <= b_err_fifo[b_idx + 1];
                     end
-                    b_err_fifo[b_pending - 6'd1] <= int_wr_err;
+                    b_err_fifo[b_pending[4:0] - 5'd1] <= int_wr_err;
                     b_pending <= b_pending;
                 end
                 default: b_pending <= b_pending;

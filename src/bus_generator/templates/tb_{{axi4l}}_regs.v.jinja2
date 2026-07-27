@@ -131,12 +131,14 @@ module tb_{{ top_name }}_regs;
                 end
 
                 begin
-                    s_axi_bready <= 1;
+                    s_axi_bready <= 0;
                     @(posedge s_axi_aclk);
                     while (s_axi_bvalid == 0) begin
                         @(posedge s_axi_aclk);
                     end
                     resp = s_axi_bresp;
+                    s_axi_bready <= 1;
+                    @(posedge s_axi_aclk);
                     s_axi_bready <= 0;
                 end
             join
@@ -161,13 +163,15 @@ module tb_{{ top_name }}_regs;
                 end
 
                 begin
-                    s_axi_rready <= 1;
+                    s_axi_rready <= 0;
                     @(posedge s_axi_aclk);
                     while (s_axi_rvalid == 0) begin
                         @(posedge s_axi_aclk);
                     end
                     data = s_axi_rdata;
                     resp = s_axi_rresp;
+                    s_axi_rready <= 1;
+                    @(posedge s_axi_aclk);
                     s_axi_rready <= 0;
                 end
             join
@@ -353,7 +357,7 @@ module tb_{{ top_name }}_regs;
         // {{ mem.hierarchy }}
             {%- if mem.is_sw_writable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
-            addr = ('h{{ '{:x}'.format(mem.address) }} + i * 4);
+            addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address) }} + i * 4);
             wdata = $urandom();
             {{ mem.name }}_exp[i] = wdata[{{ mem.width-1 }}:0];
             axi_write(addr, wdata, resp);
@@ -362,7 +366,7 @@ module tb_{{ top_name }}_regs;
             {%- endif %}
             {%- if mem.is_sw_readable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
-            addr = ('h{{ '{:x}'.format(mem.address) }} + i * 4);
+            addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address) }} + i * 4);
             axi_read(addr, rdata, resp);
             check_resp(addr, resp);
                 {%- if mem.is_sw_writable %}

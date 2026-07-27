@@ -685,8 +685,11 @@ async def stress_mixed_overlap(dut):
 
 
 def _run_cocotb_test(top, testcase):
-    if not shutil.which("iverilog") or not shutil.which("vvp"):
+    sim = os.environ.get("SIM", "icarus").lower()
+    if sim == "icarus" and (not shutil.which("iverilog") or not shutil.which("vvp")):
         pytest.skip("iverilog/vvp not installed")
+    if sim == "verilator" and not shutil.which("verilator"):
+        pytest.skip("verilator not installed")
     pytest.importorskip("cocotb_tools.runner")
 
     dut = GENERATED / "axi4l" / f"{top}_regs.v"
@@ -697,7 +700,7 @@ def _run_cocotb_test(top, testcase):
         sys.path.insert(0, str(TESTS_DIR))
     from cocotb_tools.runner import get_runner
 
-    runner = get_runner("icarus")
+    runner = get_runner(sim)
     hdl_toplevel = f"{top}_regs"
     runner.build(
         sources=[str(dut)],
