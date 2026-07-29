@@ -25,6 +25,7 @@ GENERATED = REPO_ROOT / "generated"
 
 SAMPLES = [
     pytest.param("gpio", id="gpio"),
+    pytest.param("mem_access", id="mem_access"),
     pytest.param("ram", id="ram"),
     pytest.param("simple", id="simple"),
     pytest.param("wstrb", id="wstrb"),

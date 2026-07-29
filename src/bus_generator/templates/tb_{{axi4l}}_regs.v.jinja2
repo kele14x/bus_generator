@@ -199,6 +199,16 @@ module tb_{{ top_name }}_regs;
         end
     endtask
 
+    task check_error_resp(input reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr,
+                          input reg [ 1:0] resp);
+        begin
+            if (resp !== 2'b10) begin
+                errors = errors + 1;
+                $display("FAIL: addr = %x expected SLVERR, got resp = %b", addr, resp);
+            end
+        end
+    endtask
+
     task check_data(input reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr,
                     input reg [{{ '{:2d}'.format(data_width-1) }}:0] got,
                     input reg [{{ '{:2d}'.format(data_width-1) }}:0] exp);
@@ -290,12 +300,22 @@ module tb_{{ top_name }}_regs;
     {%- for mem in mems %}
     always @(posedge s_axi_aclk) begin
         if (s_axi_aresetn && DUT.int_rd_en && DUT.{{ mem.name }}_strb) begin
-            if ({{ mem.name }}_be !== { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} }) begin
+            {%- if mem.is_sw_readable %}
+            if (!{{ mem.name }}_en || {{ mem.name }}_we ||
+                ({{ mem.name }}_be !== { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} })) begin
                 errors = errors + 1;
-                $display("FAIL: {{ mem.hierarchy }} byte enable asserted during read");
+                $display("FAIL: {{ mem.hierarchy }} readable access signal mismatch");
             end
+            {%- else %}
+            if ({{ mem.name }}_en || {{ mem.name }}_we ||
+                (|{{ mem.name }}_be)) begin
+                errors = errors + 1;
+                $display("FAIL: {{ mem.hierarchy }} prohibited read reached external memory");
+            end
+            {%- endif %}
         end
         if (s_axi_aresetn && DUT.int_wr_en && DUT.{{ mem.name }}_strb) begin
+            {%- if mem.is_sw_writable %}
             if (DUT.int_wr_strb == { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} }) begin
                 if ({{ mem.name }}_en || {{ mem.name }}_we || (|{{ mem.name }}_be)) begin
                     errors = errors + 1;
@@ -306,6 +326,13 @@ module tb_{{ top_name }}_regs;
                 errors = errors + 1;
                 $display("FAIL: {{ mem.hierarchy }} byte enable/write mismatch");
             end
+            {%- else %}
+            if ({{ mem.name }}_en || {{ mem.name }}_we ||
+                (|{{ mem.name }}_be)) begin
+                errors = errors + 1;
+                $display("FAIL: {{ mem.hierarchy }} prohibited write reached external memory");
+            end
+            {%- endif %}
         end
     end
     {%- endfor %}
@@ -480,6 +507,19 @@ module tb_{{ top_name }}_regs;
             check_data(addr, rdata[{{ mem.width-1 }}:0], {{ mem.name }}_exp[i]);
                 {%- endif %}
         end
+            {%- endif %}
+            {%- if not mem.is_sw_writable %}
+        // Writes prohibited by the RDL sw property must not reach the memory.
+        addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address) }});
+        wdata = $urandom();
+        axi_write(addr, wdata, resp);
+        check_error_resp(addr, resp);
+            {%- endif %}
+            {%- if not mem.is_sw_readable %}
+        // Reads prohibited by the RDL sw property must not reach the memory.
+        addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address) }});
+        axi_read(addr, rdata, resp);
+        check_error_resp(addr, resp);
             {%- endif %}
         {%- endfor %}
         #1000;

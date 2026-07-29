@@ -20,82 +20,35 @@ No production code was modified during this review. The Git worktree was clean a
 
 | Priority | Count | Main areas |
 |---|---:|---|
-| High | 3 | AXI byte strobes, access permissions, SystemRDL side effects |
+| High | 2 | Field access permissions, SystemRDL side effects |
 | Medium | 4 | Memory bounds, invalid widths, version lookup, simulation coverage |
 | Low | 2 | Silent no-output invocation, nested output directories |
 
 ## Findings
 
-### [HIGH] AXI byte write strobes are ignored
+### [HIGH] Field software access permissions are not fully enforced
 
 Location:
 
-- `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:436`
-- `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:472`
+- `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:386`
+- `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:402`
+- `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:528`
 
-The generated register write path captures `s_axi_wstrb` but does not use it when updating fields. A write replaces the complete field value regardless of which byte lanes are enabled. Generated memory interfaces also have no byte-enable output.
-
-Impact:
-
-- AXI4-Lite byte and half-word writes can corrupt unselected bytes.
-- Memory byte writes cannot be represented correctly.
-
-Recommended fix:
-
-- Derive a bit mask from `int_wr_strb` and merge old/new register values.
-- Add byte-enable signals to generated memory interfaces, or explicitly reject unsupported partial memory writes with an error response.
-- Add tests for each byte strobe pattern.
-
-Status: Done (2026-07-29)
-
-Implemented scope:
-
-- `int_wr_strb` is expanded to a bit mask and each software-writable stored
-  field merges only the selected byte lanes.
-- Cross-byte fields use the corresponding slice of that mask, so each covered
-  byte lane is independently merged.
-- Software-only fields retain unstrobed stored bits. Mixed `sw=rw`/`hw=rw`
-  fields retain the established write-cycle rule: strobed bits use software
-  data while unstrobed bits use the hardware input. Hardware-only fields
-  retain their existing hardware-driven behavior.
-- External memories expose `<memory>_be`; it is zero for reads, mirrors AXI
-  WSTRB for writes, and WSTRB=0 suppresses both physical enable and write
-  while the AXI transaction still receives its normal response.
-- The generated self-checking testbench covers every byte lane touched by a
-  field, cross-byte fields, zero-strobe register writes, partial memory
-  writes, read byte-enable clearing, and zero-strobe memory-write suppression.
-- Cocotb stress-test BFMs randomize WSTRB values and check partial-byte
-  register and memory writes through matching expected models.
-
-Verification completed after the implementation:
-
-- `uv run pytest`: 51 passed.
-- `make gen`: 13 generation checks passed.
-- Questa compilation and self-checking simulation: `gpio`, `ram`, `simple`,
-  and `wstrb` each reported `TEST PASSED`.
-
-### [HIGH] Software access permissions are not fully enforced
-
-Location:
-
-- `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:391`
-- `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:490`
-- `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:472-473`
-
-Register readback iterates over all fields instead of filtering by `is_sw_readable`. Read decode also treats write-only fields as valid. Memory enable/write signals are not fully gated by their software access permissions.
+Register readback iterates over all fields instead of filtering by
+`is_sw_readable`. Read and write response decoding also treats every field
+address as valid without checking the direction-specific software permission.
 
 Impact:
 
 - Software may read fields declared write-only.
-- Read-only/write-only memory regions may receive unsupported physical accesses.
-- Generated AXI responses may report success for invalid accesses.
+- Writes to read-only fields and reads from write-only fields may report success.
 
 Recommended fix:
 
 - Include only `is_sw_readable` fields in readback and read-valid decode.
-- Gate memory read and write enables independently using the corresponding permissions.
+- Include only `is_sw_writable` fields in write-valid decode.
 - Return a defined AXI error response for unsupported accesses.
-- Add RDL fixtures for `sw = r`, `sw = w`, and `sw = na` cases.
+- Add field fixtures for `sw = r`, `sw = w`, and `sw = na`.
 
 Status: Open
 
@@ -105,7 +58,11 @@ Location:
 
 - `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:431`
 
-The implementation handles basic reset, software writes, and hardware inputs, but does not implement SystemRDL side-effect properties such as `onread`, `onwrite`, write-one-to-clear, write-one-to-set, read-clear, or single-pulse behavior.
+The implementation handles basic reset, software writes, and hardware inputs,
+but does not implement SystemRDL side-effect properties such as `onread`,
+`onwrite`, write-one-to-clear, write-one-to-set, read-clear, or single-pulse
+behavior. The write-once semantics of `sw=rw1` and `sw=w1` are also not
+enforced for fields or memories.
 
 Impact:
 
@@ -272,31 +229,7 @@ Status: Confirmed by CLI execution
 
 ## Verification Notes
 
-The nominal generated samples compile and pass under Questa, but their current testbenches do not cover all findings above. In particular, they use full-word writes and do not exercise invalid permission combinations, exact memory-region boundaries, or unsupported SystemRDL side effects.
-
-## Implemented WSTRB Semantics (First Stage)
-
-The first-stage implementation supports WSTRB for both register fields and
-external memories. No special protection policy is applied to the current
-field set.
-
-For ordinary fields:
-
-- WSTRB is expanded into a bit mask, with one enable bit per byte lane.
-- Selected bits are updated from the software write data.
-- Unselected bits preserve their normal source according to the field's hardware-write capability.
-- `WSTRB=0` selects no software bits, returns a normal AXI response, and still allows the normal hardware behavior for hardware-writable fields. For software-only fields, the stored value remains unchanged.
-
-For a field that is both software- and hardware-writable (`sw=rw`, `hw=rw`), software has per-bit priority only during the write cycle:
-
-```verilog
-next_value = (hw_value & ~software_write_mask)
-           | (software_write_data & software_write_mask);
-```
-
-Thus, during the software write cycle, strobed bits come from software and unstrobed bits come from hardware. On the following cycle, with no software write active, the field returns to full hardware updates.
-
-For software-only fields, unstrobed bits preserve the existing field value. For hardware-only fields, the field continues to follow the hardware input as before.
-
-External memory interfaces expose a byte-enable output named `<mem>_be`, and
-the external memory model applies the same byte-merge semantics.
+The generated samples compile and pass under Questa, but their testbenches do
+not cover every remaining finding. In particular, field permission
+combinations, exact memory-region boundaries, and unsupported SystemRDL side
+effects still need dedicated coverage.

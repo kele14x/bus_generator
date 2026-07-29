@@ -15,6 +15,7 @@ from bus_generator.bus_generator import (
 from systemrdl import RDLCompiler, RDLWalker
 
 GPIO_RDL = "tests/gpio.rdl"
+MEM_ACCESS_RDL = "tests/mem_access.rdl"
 RAM_RDL = "tests/ram.rdl"
 SIMPLE_RDL = "tests/simple.rdl"
 
@@ -163,6 +164,32 @@ def test_ram_mems(ram_top):
         assert mem["addr_lsb"] == 2
         assert mem["addr_width"] == mem["addr_msb"] - mem["addr_lsb"] + 1
     assert {m["address"] for m in mems} == {0x100, 0x140}
+
+
+# ---------------------------------------------------------------------------
+# Listeners on mem_access.rdl
+# ---------------------------------------------------------------------------
+
+
+def test_memory_access_permissions():
+    mems = _gather(_compile(MEM_ACCESS_RDL), MemGatheringListener).mems
+    by_name = {m["name"]: m for m in mems}
+
+    assert by_name["mem_r"]["sw"] == "r"
+    assert by_name["mem_r"]["is_sw_readable"]
+    assert not by_name["mem_r"]["is_sw_writable"]
+
+    assert by_name["mem_w"]["sw"] == "w"
+    assert not by_name["mem_w"]["is_sw_readable"]
+    assert by_name["mem_w"]["is_sw_writable"]
+
+    assert by_name["mem_rw"]["sw"] == "rw"
+    assert by_name["mem_rw"]["is_sw_readable"]
+    assert by_name["mem_rw"]["is_sw_writable"]
+
+    assert by_name["mem_na"]["sw"] == "na"
+    assert not by_name["mem_na"]["is_sw_readable"]
+    assert not by_name["mem_na"]["is_sw_writable"]
 
 
 # ---------------------------------------------------------------------------

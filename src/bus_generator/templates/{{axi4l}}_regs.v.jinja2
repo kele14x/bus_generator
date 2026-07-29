@@ -489,11 +489,28 @@ module {{ top_name }}_regs (
     // Memory {{ mem.hierarchy }} @'h{{ '{:x}'.format(mem.address) }}
 
     assign {{ mem.name }}_addr = int_addr[{{ mem.addr_msb }}:{{ mem.addr_lsb }}];
+    {%- if mem.is_sw_readable and mem.is_sw_writable %}
     assign {{ mem.name }}_en   = ((int_rd_en && {{ mem.name }}_strb) ||
                                   (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb)));
     assign {{ mem.name }}_we   = (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb));
     assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
     assign {{ mem.name }}_be   = (int_wr_en && {{ mem.name }}_strb) ? int_wr_strb : {STRB_WIDTH{1'b0}};
+    {%- elif mem.is_sw_readable %}
+    assign {{ mem.name }}_en   = (int_rd_en && {{ mem.name }}_strb);
+    assign {{ mem.name }}_we   = 1'b0;
+    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
+    assign {{ mem.name }}_be   = {STRB_WIDTH{1'b0}};
+    {%- elif mem.is_sw_writable %}
+    assign {{ mem.name }}_en   = (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb));
+    assign {{ mem.name }}_we   = (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb));
+    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
+    assign {{ mem.name }}_be   = (int_wr_en && {{ mem.name }}_strb) ? int_wr_strb : {STRB_WIDTH{1'b0}};
+    {%- else %}
+    assign {{ mem.name }}_en   = 1'b0;
+    assign {{ mem.name }}_we   = 1'b0;
+    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
+    assign {{ mem.name }}_be   = {STRB_WIDTH{1'b0}};
+    {%- endif %}
     {%- endfor %}
 
 

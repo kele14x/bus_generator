@@ -9,6 +9,7 @@ from bus_generator import main
 
 SAMPLES = [
     pytest.param("tests/gpio.rdl", "gpio", id="gpio"),
+    pytest.param("tests/mem_access.rdl", "mem_access", id="mem_access"),
     pytest.param("tests/ram.rdl", "ram", id="ram"),
     pytest.param("tests/simple.rdl", "simple", id="simple"),
     pytest.param("tests/wstrb.rdl", "wstrb", id="wstrb"),
@@ -55,6 +56,37 @@ def test_generate_wstrb_rtl_and_testbench(tmp_path):
     tb = (tb_out / "tb_wstrb_regs.v").read_text()
     assert "task axi_write_be" in tb
     assert "be =  4'h2;" in tb  # The fixture has software and mixed cross-byte fields.
-    assert "byte enable asserted during read" in tb
+    assert "readable access signal mismatch" in tb
     assert "WSTRB=0 issued a physical memory access" in tb
     assert '$display("Read: addr = %x, data = %x, resp = %x", addr, data, resp);' in tb
+
+
+def test_generate_memory_access_permissions(tmp_path):
+    """Render each memory access mode into permission-gated physical signals."""
+    out = tmp_path / "axi4l"
+    main(["tests/mem_access.rdl", "-o", str(out), "-t", "axi4l"])
+
+    rtl = (out / "mem_access_regs.v").read_text()
+
+    assert "assign mem_r_en   = (int_rd_en && mem_r_strb);" in rtl
+    assert "assign mem_r_we   = 1'b0;" in rtl
+    assert "assign mem_r_be   = {STRB_WIDTH{1'b0}};" in rtl
+
+    assert "assign mem_w_en   = (int_wr_en && mem_w_strb && (|int_wr_strb));" in rtl
+    assert "assign mem_w_we   = (int_wr_en && mem_w_strb && (|int_wr_strb));" in rtl
+
+    assert "assign mem_rw_en   = ((int_rd_en && mem_rw_strb) ||" in rtl
+    assert "assign mem_rw_we   = (int_wr_en && mem_rw_strb && (|int_wr_strb));" in rtl
+
+    assert "assign mem_na_en   = 1'b0;" in rtl
+    assert "assign mem_na_we   = 1'b0;" in rtl
+    assert "assign mem_na_be   = {STRB_WIDTH{1'b0}};" in rtl
+
+    tb_out = tmp_path / "tb_axi4l"
+    main(["tests/mem_access.rdl", "-o", str(tb_out), "-t", "tb_axi4l"])
+    tb = (tb_out / "tb_mem_access_regs.v").read_text()
+    assert "task check_error_resp" in tb
+    assert "mem_r prohibited write reached external memory" in tb
+    assert "mem_w prohibited read reached external memory" in tb
+    assert "mem_na prohibited write reached external memory" in tb
+    assert "mem_na prohibited read reached external memory" in tb

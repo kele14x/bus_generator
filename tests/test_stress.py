@@ -34,6 +34,7 @@ DATA_MASK = (1 << DATA_WIDTH) - 1
 STRB_MASK = (1 << STRB_WIDTH) - 1
 SAMPLES = [
     pytest.param("gpio", id="gpio"),
+    pytest.param("mem_access", id="mem_access"),
     pytest.param("ram", id="ram"),
     pytest.param("simple", id="simple"),
     pytest.param("wstrb", id="wstrb"),

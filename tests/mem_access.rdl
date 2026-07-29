@@ -1,0 +1,25 @@
+addrmap mem_access {
+    name = "External Memory Software Access Test";
+
+    default memwidth = 32;
+
+    external mem {
+        mementries = 2;
+        sw = r;
+    } mem_r @ 0x00;
+
+    external mem {
+        mementries = 2;
+        sw = w;
+    } mem_w @ 0x20;
+
+    external mem {
+        mementries = 2;
+        sw = rw;
+    } mem_rw @ 0x40;
+
+    external mem {
+        mementries = 2;
+        sw = na;
+    } mem_na @ 0x60;
+};
