@@ -425,6 +425,12 @@ module tb_{{ top_name }}_regs;
         wdata = $urandom();
         axi_write(addr, wdata, resp);
         check_resp(addr, resp);
+                {%- if field.is_hw_readable and not field.is_hw_writable %}
+        if ({{ field.name }}_out !== wdata[{{ field.msb }}:{{ field.lsb }}]) begin
+            errors = errors + 1;
+            $display("FAIL: {{ field.hierarchy }} permitted write did not update hardware output");
+        end
+                {%- endif %}
             {%- endif %}
             {%- if field.is_sw_readable %}
         axi_read(addr, rdata, resp);
@@ -472,6 +478,35 @@ module tb_{{ top_name }}_regs;
         check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
                    expected & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
                 {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+        // Field software-access permission tests.
+        {%- for field in fields %}
+            {%- set address_fields = fields | selectattr("address", "equalto", field.address) | list %}
+            {%- if not (address_fields | selectattr("is_sw_writable") | list) %}
+
+        // {{ field.hierarchy }} must reject software writes.
+        addr = 'h{{ '{:x}'.format(field.address) }};
+                {%- if field.is_hw_readable %}
+        expected = {{ field.name }}_out;
+                {%- endif %}
+        wdata = $urandom();
+        axi_write(addr, wdata, resp);
+        check_error_resp(addr, resp);
+                {%- if field.is_hw_readable %}
+        if ({{ field.name }}_out !== expected[{{ field.width-1 }}:0]) begin
+            errors = errors + 1;
+            $display("FAIL: {{ field.hierarchy }} prohibited write changed hardware output");
+        end
+                {%- endif %}
+            {%- endif %}
+            {%- if not (address_fields | selectattr("is_sw_readable") | list) %}
+
+        // {{ field.hierarchy }} must reject software reads without readback.
+        addr = 'h{{ '{:x}'.format(field.address) }};
+        axi_read(addr, rdata, resp);
+        check_error_resp(addr, resp);
+        check_data(addr, rdata, {{ data_width }}'h0);
             {%- endif %}
         {%- endfor %}
         {%- for mem in mems %}

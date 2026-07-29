@@ -1,0 +1,25 @@
+field no_access_field_t {
+    sw = na;
+    hw = rw;
+};
+
+addrmap field_access {
+    name = "Field Software Access Test";
+
+    reg {
+        field {
+            name = "Read Only";
+            sw = r;
+            hw = rw;
+        } r_only[31:0] = 0x0;
+    } r_only @ 0x0;
+
+    reg {
+        field {
+            name = "Write Only";
+            sw = w;
+            hw = r;
+        } w_only[31:0] = 0x0;
+    } w_only @ 0x4;
+
+};

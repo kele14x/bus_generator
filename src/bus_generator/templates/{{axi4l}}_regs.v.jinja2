@@ -384,9 +384,11 @@ module {{ top_name }}_regs (
     always @(*) begin
         int_wr_err_next = 1'b1;
         {%- for field in fields %}
+        {%- if field.is_sw_writable %}
         if ({{ field.name }}_strb) begin
             int_wr_err_next = 1'b0;
         end
+        {%- endif %}
         {%- endfor %}
         {%- for mem in mems %}
         {%- if mem.is_sw_writable %}
@@ -400,9 +402,11 @@ module {{ top_name }}_regs (
     always @(*) begin
         int_rd_err_next = 1'b1;
         {%- for field in fields %}
+        {%- if field.is_sw_readable %}
         if ({{ field.name }}_strb) begin
             int_rd_err_next = 1'b0;
         end
+        {%- endif %}
         {%- endfor %}
         {%- for mem in mems %}
         {%- if mem.is_sw_readable %}
@@ -526,9 +530,11 @@ module {{ top_name }}_regs (
     always @(*) begin
         field_rd_data_next = {DATA_WIDTH{1'b0}};
         {%- for field in fields %}
+        {%- if field.is_sw_readable %}
         if (int_rd_en && {{ field.name }}_strb) begin
             field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] = field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] | {{ field.name }}_value;
         end
+        {%- endif %}
         {%- endfor %}
     end
 
@@ -546,9 +552,11 @@ module {{ top_name }}_regs (
         end else begin
             field_strb <= 1'b0;
             {%- for field in fields %}
+            {%- if field.is_sw_readable %}
             if (int_rd_en && {{ field.name }}_strb) begin
                 field_strb <= 1'b1;
             end
+            {%- endif %}
             {%- endfor %}
         end
     end

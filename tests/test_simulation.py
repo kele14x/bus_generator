@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GENERATED = REPO_ROOT / "generated"
 
 SAMPLES = [
+    pytest.param("field_access", id="field_access"),
     pytest.param("gpio", id="gpio"),
     pytest.param("mem_access", id="mem_access"),
     pytest.param("ram", id="ram"),

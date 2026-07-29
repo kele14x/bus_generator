@@ -15,6 +15,7 @@ from bus_generator.bus_generator import (
 from systemrdl import RDLCompiler, RDLWalker
 
 GPIO_RDL = "tests/gpio.rdl"
+FIELD_ACCESS_RDL = "tests/field_access.rdl"
 MEM_ACCESS_RDL = "tests/mem_access.rdl"
 RAM_RDL = "tests/ram.rdl"
 SIMPLE_RDL = "tests/simple.rdl"
@@ -119,6 +120,24 @@ def test_gpio_regs(gpio_top):
 def test_gpio_no_mems(gpio_top):
     mems = _gather(gpio_top, MemGatheringListener).mems
     assert mems == []
+
+
+# ---------------------------------------------------------------------------
+# Listeners on field_access.rdl
+# ---------------------------------------------------------------------------
+
+
+def test_field_access_permissions():
+    fields = _gather(_compile(FIELD_ACCESS_RDL), FieldsGatheringListener).fields
+    by_name = {f["name"]: f for f in fields}
+
+    assert by_name["r_only_r_only"]["sw"] == "r"
+    assert by_name["r_only_r_only"]["is_sw_readable"]
+    assert not by_name["r_only_r_only"]["is_sw_writable"]
+
+    assert by_name["w_only_w_only"]["sw"] == "w"
+    assert not by_name["w_only_w_only"]["is_sw_readable"]
+    assert by_name["w_only_w_only"]["is_sw_writable"]
 
 
 # ---------------------------------------------------------------------------

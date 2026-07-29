@@ -8,6 +8,7 @@ import pytest
 from bus_generator import main
 
 SAMPLES = [
+    pytest.param("tests/field_access.rdl", "field_access", id="field_access"),
     pytest.param("tests/gpio.rdl", "gpio", id="gpio"),
     pytest.param("tests/mem_access.rdl", "mem_access", id="mem_access"),
     pytest.param("tests/ram.rdl", "ram", id="ram"),
@@ -90,3 +91,33 @@ def test_generate_memory_access_permissions(tmp_path):
     assert "mem_w prohibited read reached external memory" in tb
     assert "mem_na prohibited write reached external memory" in tb
     assert "mem_na prohibited read reached external memory" in tb
+
+
+def test_generate_field_access_permissions(tmp_path):
+    """Render field permissions into direction-specific decoders and tests."""
+    axi4l_out = tmp_path / "axi4l"
+    tb_out = tmp_path / "tb_axi4l"
+    main(["tests/field_access.rdl", "-o", str(axi4l_out), "-t", "axi4l"])
+    main(["tests/field_access.rdl", "-o", str(tb_out), "-t", "tb_axi4l"])
+
+    rtl = (axi4l_out / "field_access_regs.v").read_text()
+    wr_decode = rtl.split("int_wr_err_next = 1'b1;", 1)[1].split(
+        "always @(*) begin\n        int_rd_err_next", 1
+    )[0]
+    rd_decode = rtl.split("int_rd_err_next = 1'b1;", 1)[1].split(
+        "always @(posedge aclk) begin", 1
+    )[0]
+    readback = rtl.split("// Register readback", 1)[1]
+
+    assert "if (w_only_w_only_strb)" in wr_decode
+    assert "r_only_r_only_strb" not in wr_decode
+    assert "if (r_only_r_only_strb)" in rd_decode
+    assert "w_only_w_only_strb" not in rd_decode
+    assert "if (int_rd_en && r_only_r_only_strb)" in readback
+    assert "if (int_rd_en && w_only_w_only_strb)" not in readback
+
+    tb = (tb_out / "tb_field_access_regs.v").read_text()
+    assert "r_only.r_only prohibited write changed hardware output" in tb
+    assert "w_only.w_only must reject software reads without readback" in tb
+    assert "check_data(addr, rdata, 32'h0);" in tb
+    assert "check_error_resp(addr, resp);" in tb

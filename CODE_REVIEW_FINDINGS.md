@@ -1,6 +1,7 @@
 # Code Review Findings
 
 Review date: 2026-07-29
+Last reconciled: 2026-07-30
 
 Review method:
 
@@ -20,7 +21,7 @@ No production code was modified during this review. The Git worktree was clean a
 
 | Priority | Count | Main areas |
 |---|---:|---|
-| High | 2 | Field access permissions, SystemRDL side effects |
+| High | 3 | Field access permissions, nested hierarchy, SystemRDL side effects |
 | Medium | 4 | Memory bounds, invalid widths, version lookup, simulation coverage |
 | Low | 2 | Silent no-output invocation, nested output directories |
 
@@ -49,6 +50,45 @@ Recommended fix:
 - Include only `is_sw_writable` fields in write-valid decode.
 - Return a defined AXI error response for unsupported accesses.
 - Add field fixtures for `sw = r`, `sw = w`, and `sw = na`.
+
+Status: Fixed (2026-07-30)
+
+Verification:
+
+- Added `tests/field_access.rdl` covering legal `sw = r` and `sw = w` fields.
+- Software writes to `sw = r` fields now return AXI `SLVERR` and do not update the field.
+- Software reads from `sw = w` fields now return AXI `SLVERR` and no field data.
+- Focused Questa/VSIM regression passed with zero errors.
+- The installed SystemRDL compiler rejects instantiating `sw = na` fields during elaboration; this limitation is covered by the fixture's unused type declaration and documented rather than bypassed.
+
+### [HIGH] Nested address maps can generate duplicate identifiers
+
+Location:
+
+- `src/bus_generator/bus_generator.py:74`
+- `src/bus_generator/bus_generator.py:78`
+
+`GeneralListener` excludes every `AddrmapNode` from `_path`. Skipping the root
+address map is intentional, but nested address-map instance names are skipped
+as well. If two child address maps contain registers or fields with the same
+local names, both children generate identical flattened Verilog identifiers
+and C macros.
+
+Impact:
+
+- Valid hierarchical SystemRDL can produce duplicate declarations and fail RTL
+  compilation.
+- Generated hardware ports and C names lose hierarchy and can refer to the
+  wrong component.
+
+Recommended fix:
+
+- Exclude only the walked root address map and include nested address-map
+  instance names in `_path`.
+- Detect flattened-name collisions before rendering and report the conflicting
+  RDL paths.
+- Add a fixture with two sibling address-map instances containing identical
+  local register and field names.
 
 Status: Open
 
@@ -80,7 +120,7 @@ Status: Open
 
 Location:
 
-- `src/bus_generator/src/bus_generator/bus_generator.py:174`
+- `src/bus_generator/bus_generator.py:182`
 - `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:367`
 
 Memory address decoding uses a power-of-two rounded region. In `tests/ram.rdl`, each memory has 14 32-bit entries (56 bytes), but the generated decoder accepts a 64-byte range.
