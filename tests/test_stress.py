@@ -29,12 +29,27 @@ GENERATED = REPO_ROOT / "generated"
 TESTS_DIR = Path(__file__).resolve().parent
 
 DATA_WIDTH = 32
+STRB_WIDTH = DATA_WIDTH // 8
 DATA_MASK = (1 << DATA_WIDTH) - 1
+STRB_MASK = (1 << STRB_WIDTH) - 1
 SAMPLES = [
     pytest.param("gpio", id="gpio"),
     pytest.param("ram", id="ram"),
     pytest.param("simple", id="simple"),
+    pytest.param("wstrb", id="wstrb"),
 ]
+
+
+def _random_wstrb():
+    return random.getrandbits(STRB_WIDTH)
+
+
+def _wstrb_to_mask(wstrb, width=DATA_WIDTH):
+    mask = 0
+    for byte in range((width + 7) // 8):
+        if wstrb & (1 << byte):
+            mask |= 0xFF << (byte * 8)
+    return mask & ((1 << width) - 1)
 
 MAX_IDLE = 4
 MAX_BP = 4
@@ -87,16 +102,19 @@ class RdlStressModel:
                 if mem["is_sw_writable"]:
                     self.write_ops.append(op)
 
-    def write(self, op, data, dut):
+    def write(self, op, data, wstrb, dut):
         data &= DATA_MASK
+        wstrb &= STRB_MASK
         if op["kind"] == "reg":
             reg = self.regs[op["addr"]]
-            reg["value"] = (reg["value"] & ~reg["write_mask"]) | (data & reg["write_mask"])
+            write_mask = reg["write_mask"] & _wstrb_to_mask(wstrb)
+            reg["value"] = (reg["value"] & ~write_mask) | (data & write_mask)
             self.drive_hw_inputs(dut)
         else:
             mem = op["mem"]
-            mask = (1 << mem["width"]) - 1
-            self.mems[mem["name"]][op["idx"]] = data & mask
+            mask = _wstrb_to_mask(wstrb, mem["width"])
+            value = self.mems[mem["name"]][op["idx"]]
+            self.mems[mem["name"]][op["idx"]] = (value & ~mask) | (data & mask)
 
     def expected_read(self, op):
         if op["kind"] == "reg":
@@ -122,6 +140,7 @@ class ExternalMemoryModel:
         self.addr = getattr(dut, f"{mem['name']}_addr")
         self.en = getattr(dut, f"{mem['name']}_en")
         self.we = getattr(dut, f"{mem['name']}_we")
+        self.be = getattr(dut, f"{mem['name']}_be")
         self.din = getattr(dut, f"{mem['name']}_din")
         self.dout = getattr(dut, f"{mem['name']}_dout")
         self.valid = getattr(dut, f"{mem['name']}_valid")
@@ -146,6 +165,7 @@ class ExternalMemoryModel:
             we = sampled_int(self.we)
             addr = sampled_int(self.addr)
             din = sampled_int(self.din)
+            be = sampled_int(self.be)
             await RisingEdge(self.clk)
             if resetn == 0:
                 pending = []
@@ -169,7 +189,10 @@ class ExternalMemoryModel:
 
             if en == 1:
                 if we == 1:
-                    self.values[addr] = din & self.mask
+                    write_mask = _wstrb_to_mask(be, self.mask.bit_length())
+                    self.values[addr] = (self.values[addr] & ~write_mask) | (
+                        din & write_mask
+                    )
                 else:
                     latency = self.random.randint(MEM_READ_LATENCY_MIN, MEM_READ_LATENCY_MAX)
                     next_pending.append((latency, addr))
@@ -230,16 +253,16 @@ class AxiLiteMaster:
         self.dut.s_axi_awvalid.value = 1
         await self._send(self.dut.s_axi_awvalid, self.dut.s_axi_awready)
 
-    async def _drive_w(self, data):
+    async def _drive_w(self, data, wstrb):
         await self._idle()
         self.dut.s_axi_wdata.value = data
-        self.dut.s_axi_wstrb.value = 0xF
+        self.dut.s_axi_wstrb.value = wstrb
         self.dut.s_axi_wvalid.value = 1
         await self._send(self.dut.s_axi_wvalid, self.dut.s_axi_wready)
 
-    async def write(self, addr, data):
+    async def write(self, addr, data, wstrb):
         aw_task = cocotb.start_soon(self._drive_aw(addr))
-        w_task = cocotb.start_soon(self._drive_w(data))
+        w_task = cocotb.start_soon(self._drive_w(data, wstrb))
         await aw_task
         await w_task
         return await self._recv(
@@ -304,25 +327,25 @@ class PipelinedWriteMaster:
         self.dut.s_axi_awvalid.value = 1
         await self._send(self.dut.s_axi_awvalid, self.dut.s_axi_awready)
 
-    async def _drive_w(self, data):
+    async def _drive_w(self, data, wstrb):
         await self._idle()
         self.dut.s_axi_wdata.value = data
-        self.dut.s_axi_wstrb.value = 0xF
+        self.dut.s_axi_wstrb.value = wstrb
         self.dut.s_axi_wvalid.value = 1
         await self._send(self.dut.s_axi_wvalid, self.dut.s_axi_wready)
 
-    async def issue_write(self, addr, data):
+    async def issue_write(self, addr, data, wstrb):
         if random.random() < 0.5:
             await self._drive_aw(addr)
-            await self._drive_w(data)
+            await self._drive_w(data, wstrb)
         else:
-            await self._drive_w(data)
+            await self._drive_w(data, wstrb)
             await self._drive_aw(addr)
         self.write_count += 1
 
-    async def issue_write_aw_first(self, addr, data):
+    async def issue_write_aw_first(self, addr, data, wstrb):
         await self._drive_aw(addr)
-        await self._drive_w(data)
+        await self._drive_w(data, wstrb)
         self.write_count += 1
 
     async def b_drain(self, expected):
@@ -507,12 +530,14 @@ async def stress_random_axi(dut):
         if do_write:
             op = random.choice(model.write_ops)
             data = random.getrandbits(DATA_WIDTH)
-            model.write(op, data, dut)
-            bresp = await master.write(op["addr"], data)
+            wstrb = _random_wstrb()
+            model.write(op, data, wstrb, dut)
+            bresp = await master.write(op["addr"], data, wstrb)
             if bresp != 0:
                 errors += 1
                 dut._log.error(
-                    f"[{i}] write addr=0x{op['addr']:02x} got bresp={bresp}, expected 0"
+                    f"[{i}] write addr=0x{op['addr']:02x} wstrb=0x{wstrb:x} "
+                    f"got bresp={bresp}, expected 0"
                 )
         else:
             op = random.choice(model.read_ops)
@@ -537,14 +562,14 @@ async def stress_write_overlap(dut):
     writes = []
     for _ in range(count):
         op = random.choice(model.write_ops)
-        writes.append((op, random.getrandbits(DATA_WIDTH)))
+        writes.append((op, random.getrandbits(DATA_WIDTH), _random_wstrb()))
 
     dut._log.info(f"issuing {count} {top} overlapped writes with B backpressure")
 
     drain_task = cocotb.start_soon(master.b_drain(count))
-    for op, data in writes:
-        model.write(op, data, dut)
-        await master.issue_write(op["addr"], data)
+    for op, data, wstrb in writes:
+        model.write(op, data, wstrb, dut)
+        await master.issue_write(op["addr"], data, wstrb)
     await drain_task
 
     errors = master.b_errors
@@ -615,7 +640,10 @@ async def stress_mixed_overlap(dut):
 
     write_count = int(os.environ.get("STRESS_MIXED_W_COUNT", "48"))
     read_count = int(os.environ.get("STRESS_MIXED_R_COUNT", "48"))
-    writes = [(random.choice(write_ops), random.getrandbits(DATA_WIDTH)) for _ in range(write_count)]
+    writes = [
+        (random.choice(write_ops), random.getrandbits(DATA_WIDTH), _random_wstrb())
+        for _ in range(write_count)
+    ]
     reads = [random.choice(read_ops) for _ in range(read_count)]
     expected_reads = []
     for op in reads:
@@ -630,9 +658,9 @@ async def stress_mixed_overlap(dut):
     r_drain_task = cocotb.start_soon(read_master.r_drain(expected_reads, read_count))
 
     async def issue_writes():
-        for op, data in writes:
-            model.write(op, data, dut)
-            await write_master.issue_write_aw_first(op["addr"], data)
+        for op, data, wstrb in writes:
+            model.write(op, data, wstrb, dut)
+            await write_master.issue_write_aw_first(op["addr"], data, wstrb)
 
     async def issue_reads():
         for op in reads:
