@@ -53,6 +53,8 @@ module tb_{{ top_name }}_regs;
     wire [{{ '{:2.0f}'.format(data_width/8-1) }}:0] {{ mem.name }}_be;
     reg  [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_dout;
     reg         {{ mem.name }}_valid;
+    reg         {{ mem.name }}_range_valid_access;
+    reg         {{ mem.name }}_range_invalid_access;
     {%- endfor %}
 
     integer errors;
@@ -91,6 +93,8 @@ module tb_{{ top_name }}_regs;
             // {{ mem.hierarchy }}
             {{ mem.name }}_dout <= 0;
             {{ mem.name }}_valid <= 0;
+            {{ mem.name }}_range_valid_access <= 0;
+            {{ mem.name }}_range_invalid_access <= 0;
             {%- endfor %}
         end
     endtask
@@ -299,6 +303,16 @@ module tb_{{ top_name }}_regs;
     // remain zero on reads, and suppress physical accesses for WSTRB=0.
     {%- for mem in mems %}
     always @(posedge s_axi_aclk) begin
+        if (s_axi_aresetn && {{ mem.name }}_range_valid_access &&
+            (DUT.int_wr_en || DUT.int_rd_en) &&
+            !{{ mem.name }}_en) begin
+            errors = errors + 1;
+            $display("FAIL: {{ mem.hierarchy }} final valid address did not assert external memory enable");
+        end
+        if (s_axi_aresetn && {{ mem.name }}_range_invalid_access && {{ mem.name }}_en) begin
+            errors = errors + 1;
+            $display("FAIL: {{ mem.hierarchy }} out-of-range address asserted external memory enable");
+        end
         if (s_axi_aresetn && DUT.int_rd_en && DUT.{{ mem.name }}_strb) begin
             {%- if mem.is_sw_readable %}
             if (!{{ mem.name }}_en || {{ mem.name }}_we ||
@@ -512,6 +526,42 @@ module tb_{{ top_name }}_regs;
         {%- for mem in mems %}
 
         // {{ mem.hierarchy }}
+        // The final valid word must select the external memory. The next two
+        // words are outside its exact byte range and must return SLVERR
+        // without selecting the memory.
+            {%- if mem.is_sw_writable or mem.is_sw_readable %}
+        addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address + mem.size - data_width // 8) }});
+        wdata = $urandom();
+        {{ mem.name }}_range_valid_access = 1'b1;
+                {%- if mem.is_sw_writable %}
+        axi_write(addr, wdata, resp);
+                {%- else %}
+        axi_read(addr, rdata, resp);
+                {%- endif %}
+        {{ mem.name }}_range_valid_access = 1'b0;
+        check_resp(addr, resp);
+            {%- endif %}
+
+        addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address + mem.size) }});
+        {{ mem.name }}_range_invalid_access = 1'b1;
+            {%- if mem.is_sw_writable %}
+        axi_write(addr, wdata, resp);
+            {%- else %}
+        axi_read(addr, rdata, resp);
+            {%- endif %}
+        {{ mem.name }}_range_invalid_access = 1'b0;
+        check_error_resp(addr, resp);
+
+        addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address + mem.size + data_width // 8) }});
+        {{ mem.name }}_range_invalid_access = 1'b1;
+            {%- if mem.is_sw_writable %}
+        axi_write(addr, wdata, resp);
+            {%- else %}
+        axi_read(addr, rdata, resp);
+            {%- endif %}
+        {{ mem.name }}_range_invalid_access = 1'b0;
+        check_error_resp(addr, resp);
+
             {%- if mem.is_sw_writable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin
             addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address) }} + i * 4);

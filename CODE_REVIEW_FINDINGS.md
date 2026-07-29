@@ -161,7 +161,17 @@ Recommended fix:
 - Assert memory enable only for valid entry indices.
 - Add tests for the first invalid word after every memory region.
 
-Status: Open
+Status: Fixed (2026-07-30)
+
+Verification:
+
+- Memory metadata now preserves the exact byte size instead of only a rounded
+  power-of-two alignment.
+- Generated decode uses the half-open byte range `[base, base + size)`.
+- Added generation assertions and boundary checks for both 14-entry memories.
+- Questa/VSIM confirmed `0x134` and `0x174` are accepted, while `0x138`,
+  `0x13c`, `0x178`, and `0x17c` return `SLVERR` without asserting the
+  external-memory enable.
 
 ### [MEDIUM] Small address maps can generate invalid Verilog
 

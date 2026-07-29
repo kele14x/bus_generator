@@ -63,6 +63,30 @@ def test_generate_wstrb_rtl_and_testbench(tmp_path):
     assert '$display("Read: addr = %x, data = %x, resp = %x", addr, data, resp);' in tb
 
 
+def test_generate_ram_memory_decode_uses_exact_byte_range(tmp_path):
+    """Non-power-of-two external memories must not decode their padded tail."""
+    axi4l_out = tmp_path / "axi4l"
+    tb_out = tmp_path / "tb_axi4l"
+    main(["tests/ram.rdl", "-o", str(axi4l_out), "-t", "axi4l"])
+    main(["tests/ram.rdl", "-o", str(tb_out), "-t", "tb_axi4l"])
+
+    rtl = (axi4l_out / "ram_regs.v").read_text()
+    tb = (tb_out / "tb_ram_regs.v").read_text()
+
+    assert (
+        "assign ram0_strb = (({1'b0, int_addr} >= 10'h100) && "
+        "({1'b0, int_addr} < 10'h138));"
+    ) in rtl
+    assert (
+        "assign ram1_strb = (({1'b0, int_addr} >= 10'h140) && "
+        "({1'b0, int_addr} < 10'h178));"
+    ) in rtl
+    assert "ram0 final valid address did not assert external memory enable" in tb
+    assert "ram0 out-of-range address asserted external memory enable" in tb
+    assert "addr = 9'('h138);" in tb
+    assert "addr = 9'('h13c);" in tb
+
+
 def test_generate_nested_addrmap_instance_names(tmp_path):
     """Nested addrmap instance names must be retained in flattened identifiers."""
     rtl_out = tmp_path / "axi4l"

@@ -246,6 +246,7 @@ def test_ram_mems(ram_top):
     assert {m["name"] for m in mems} == {"ram0", "ram1"}
     for mem in mems:
         assert mem["mementries"] == 14
+        assert mem["size"] == 56
         assert mem["width"] == 32
         assert mem["is_sw_writable"] and mem["is_sw_readable"]
         # data_width=32 -> 4 bytes -> LSB at bit ceil(log2(4)) = 2

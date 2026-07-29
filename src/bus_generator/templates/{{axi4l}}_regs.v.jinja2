@@ -374,7 +374,7 @@ module {{ top_name }}_regs (
     wire {{ mem.name }}_strb;
     reg  {{ mem.name }}_rd_sel;
 
-    assign {{ mem.name }}_strb = (int_addr[{{ addr_width-1 }}:{{ mem.addr_msb+1 }}] == 'h{{ '{:x}'.format(mem.aligned_address) }});
+    assign {{ mem.name }}_strb = (({1'b0, int_addr} >= {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address) }}) && ({1'b0, int_addr} < {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address + mem.size) }}));
     {%- endfor %}
 
     assign rd_mem_pending = 1'b0{% for mem in mems %}{% if mem.is_sw_readable %} || {{ mem.name }}_rd_sel{% endif %}{% endfor %};

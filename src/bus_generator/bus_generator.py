@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import sys
-from math import ceil, floor, log2
+from math import ceil, log2
 
 from jinja2 import Environment, FileSystemLoader
 from systemrdl import RDLCompiler, RDLListener, RDLWalker
@@ -227,9 +227,7 @@ class MemGatheringListener(GeneralListener):
             "desc": node.get_property("desc"),
             "hierarchy": ".".join(self._path),
             "address": node.absolute_address,
-            "aligned_address": floor(
-                node.absolute_address / 2 ** ceil(log2(node.size))
-            ),
+            "size": node.size,
             "mementries": node.get_property("mementries"),
             "addr_width": ceil(log2(node.size)) - ceil(log2(self._data_width / 8)),
             "addr_msb": ceil(log2(node.size)) - 1,
