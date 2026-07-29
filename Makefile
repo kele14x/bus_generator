@@ -3,7 +3,7 @@
 
 PYTEST := uv run pytest
 GENERATED := generated
-SAMPLES := field_access gpio mem_access ram simple wstrb
+SAMPLES := field_access gpio mem_access nested_addrmaps ram simple wstrb
 TEMPLATES := axi4l c_header tb_axi4l
 
 AXI4L_ARTIFACTS := $(addprefix $(GENERATED)/axi4l/,$(addsuffix _regs.v,$(SAMPLES)))

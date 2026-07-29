@@ -90,7 +90,14 @@ Recommended fix:
 - Add a fixture with two sibling address-map instances containing identical
   local register and field names.
 
-Status: Open
+Status: Fixed (2026-07-30)
+
+Verification:
+
+- Added `tests/nested_addrmaps.rdl` with sibling `left` and `right` instances.
+- Generated Verilog and C header identifiers retain both nested instance names.
+- Focused Questa/VSIM compilation and simulation passed with zero errors.
+- Existing root-level names and WSTRB behavior remain covered by the existing suite.
 
 ### [HIGH] SystemRDL side-effect properties are silently ignored
 

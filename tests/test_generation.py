@@ -11,6 +11,7 @@ SAMPLES = [
     pytest.param("tests/field_access.rdl", "field_access", id="field_access"),
     pytest.param("tests/gpio.rdl", "gpio", id="gpio"),
     pytest.param("tests/mem_access.rdl", "mem_access", id="mem_access"),
+    pytest.param("tests/nested_addrmaps.rdl", "nested_addrmaps", id="nested_addrmaps"),
     pytest.param("tests/ram.rdl", "ram", id="ram"),
     pytest.param("tests/simple.rdl", "simple", id="simple"),
     pytest.param("tests/wstrb.rdl", "wstrb", id="wstrb"),
@@ -60,6 +61,22 @@ def test_generate_wstrb_rtl_and_testbench(tmp_path):
     assert "readable access signal mismatch" in tb
     assert "WSTRB=0 issued a physical memory access" in tb
     assert '$display("Read: addr = %x, data = %x, resp = %x", addr, data, resp);' in tb
+
+
+def test_generate_nested_addrmap_instance_names(tmp_path):
+    """Nested addrmap instance names must be retained in flattened identifiers."""
+    rtl_out = tmp_path / "axi4l"
+    header_out = tmp_path / "c_header"
+    main(["tests/nested_addrmaps.rdl", "-o", str(rtl_out), "-t", "axi4l"])
+    main(["tests/nested_addrmaps.rdl", "-o", str(header_out), "-t", "c_header"])
+
+    rtl = (rtl_out / "nested_addrmaps_regs.v").read_text()
+    header = (header_out / "nested_addrmaps.h").read_text()
+
+    assert "left_status_value" in rtl
+    assert "right_status_value" in rtl
+    assert "LEFT_STATUS_VALUE_ADDR" in header
+    assert "RIGHT_STATUS_VALUE_ADDR" in header
 
 
 def test_generate_memory_access_permissions(tmp_path):

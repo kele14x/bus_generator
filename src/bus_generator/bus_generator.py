@@ -65,17 +65,22 @@ class GeneralListener(RDLListener):
     def __init__(self):
         self._address = 0
         self._path = []
+        self._root_addrmap = None
         self._addr_width = 1
         self._data_width = DATA_WIDTH
 
     def enter_Component(self, node: Node):
         if isinstance(node, AddrmapNode):
             self._addr_width = ceil(log2(node.total_size))
-        if not isinstance(node, AddrmapNode):
+            if self._root_addrmap is None:
+                self._root_addrmap = node
+            else:
+                self._path.append(node.inst_name)
+        else:
             self._path.append(node.inst_name)
 
     def exit_Component(self, node: Node):
-        if not isinstance(node, AddrmapNode):
+        if node is not self._root_addrmap:
             self._path.pop()
 
     def enter_AddressableComponent(self, node: AddressableNode):
