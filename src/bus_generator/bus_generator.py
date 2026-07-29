@@ -3,10 +3,10 @@
 source."""
 
 import argparse
+import importlib.metadata
 import logging
 import os
 import re
-import subprocess
 import sys
 from math import ceil, log2
 
@@ -25,15 +25,15 @@ from systemrdl.node import (
 )
 from systemrdl.rdltypes import AccessType
 
-try:
-    cwd = os.path.dirname(os.path.abspath(__file__))
-    __version__ = (
-        subprocess.check_output(["git", "describe", "--tags"], cwd=cwd)
-        .strip()
-        .decode("utf-8")
-    )
-except subprocess.SubprocessError:
-    __version__ = "unknown"
+def _resolve_version() -> str:
+    """Return the installed package version, if package metadata is available."""
+    try:
+        return importlib.metadata.version("bus-generator")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+__version__ = _resolve_version()
 
 # AXI4-Lite bus geometry assumed by the generated Verilog.
 DATA_WIDTH = 32

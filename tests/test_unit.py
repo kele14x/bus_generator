@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Pure-Python unit tests for the bus_generator CLI and internals."""
 
+import importlib
+import importlib.metadata
 import subprocess
 import sys
 
 import pytest
 
 from bus_generator import main
+import bus_generator.bus_generator as bus_generator_module
 from bus_generator.bus_generator import (
     FieldsGatheringListener,
     MemGatheringListener,
@@ -42,6 +45,37 @@ def _gather(top, listener_cls):
 # ---------------------------------------------------------------------------
 # discover_templates / parse_arguments
 # ---------------------------------------------------------------------------
+
+
+def test_version_prefers_distribution_metadata(monkeypatch):
+    monkeypatch.setattr(
+        importlib.metadata, "version", lambda name: "0.3.0"
+    )
+
+    assert bus_generator_module._resolve_version() == "0.3.0"
+
+
+def test_version_is_unknown_when_distribution_metadata_is_missing(monkeypatch):
+    def missing_distribution(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", missing_distribution)
+
+    assert bus_generator_module._resolve_version() == "unknown"
+
+
+def test_import_is_safe_when_metadata_is_unavailable(monkeypatch):
+    def missing_distribution(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(importlib.metadata, "version", missing_distribution)
+            reloaded_module = importlib.reload(bus_generator_module)
+
+            assert reloaded_module.__version__ == "unknown"
+    finally:
+        importlib.reload(bus_generator_module)
 
 
 def test_discover_templates():

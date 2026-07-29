@@ -241,11 +241,20 @@ Impact:
 
 Recommended fix:
 
-- Use `importlib.metadata.version("bus-generator")` for installed packages.
-- Align package metadata and release tags.
-- Keep Git-derived version lookup as an optional development fallback, not an import-time requirement.
+- Use `importlib.metadata.version("bus-generator")` as the sole runtime source.
+- Keep the release version in `pyproject.toml` and synchronize lock/build metadata.
+- Return `unknown` for an uninstalled source checkout instead of invoking Git at import time.
 
-Status: Open
+Status: Fixed (2026-07-30)
+
+Verification:
+
+- Runtime version now uses `importlib.metadata.version("bus-generator")` as
+  the sole source, matching the distribution metadata (`0.3.0`).
+- When package metadata is unavailable, runtime version resolution returns
+  `unknown` without invoking Git or preventing import.
+- Added tests for metadata precedence, unavailable metadata, and import safety.
+- `uv build` produced matching `0.3.0` source and wheel artifacts.
 
 ### [MEDIUM] Default pytest command does not guarantee RTL simulation
 
