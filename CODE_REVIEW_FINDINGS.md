@@ -46,7 +46,7 @@ Recommended fix:
 - Add byte-enable signals to generated memory interfaces, or explicitly reject unsupported partial memory writes with an error response.
 - Add tests for each byte strobe pattern.
 
-Status: Implemented (first stage, 2026-07-29)
+Status: Done (2026-07-29)
 
 Implemented scope:
 
@@ -64,10 +64,12 @@ Implemented scope:
 - The generated self-checking testbench covers every byte lane touched by a
   field, cross-byte fields, zero-strobe register writes, partial memory
   writes, read byte-enable clearing, and zero-strobe memory-write suppression.
+- Cocotb stress-test BFMs randomize WSTRB values and check partial-byte
+  register and memory writes through matching expected models.
 
 Verification completed after the implementation:
 
-- `uv run pytest`: 31 passed, 16 simulator-backend skips.
+- `uv run pytest`: 51 passed.
 - `make gen`: 13 generation checks passed.
 - Questa compilation and self-checking simulation: `gpio`, `ram`, `simple`,
   and `wstrb` each reported `TEST PASSED`.
