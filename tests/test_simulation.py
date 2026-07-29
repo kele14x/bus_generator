@@ -27,6 +27,7 @@ SAMPLES = [
     pytest.param("gpio", id="gpio"),
     pytest.param("ram", id="ram"),
     pytest.param("simple", id="simple"),
+    pytest.param("wstrb", id="wstrb"),
 ]
 
 

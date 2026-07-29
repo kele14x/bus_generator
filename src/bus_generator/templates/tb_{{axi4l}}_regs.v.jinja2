@@ -50,6 +50,7 @@ module tb_{{ top_name }}_regs;
     wire        {{ mem.name }}_en;
     wire        {{ mem.name }}_we;
     wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_din;
+    wire [{{ '{:2.0f}'.format(data_width/8-1) }}:0] {{ mem.name }}_be;
     reg  [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_dout;
     reg         {{ mem.name }}_valid;
     {%- endfor %}
@@ -103,9 +104,10 @@ module tb_{{ top_name }}_regs;
         end
     endtask
 
-    task axi_write(input  reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr,
-                   input  reg [{{ '{:2d}'.format(data_width-1) }}:0] data,
-                   output reg [ 1:0] resp);
+    task axi_write_be(input  reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr,
+                     input  reg [{{ '{:2d}'.format(data_width-1) }}:0] data,
+                     input  reg [{{ '{:2.0f}'.format(data_width/8-1) }}:0] be,
+                     output reg [ 1:0] resp);
         begin
             fork
                 begin
@@ -121,7 +123,7 @@ module tb_{{ top_name }}_regs;
 
                 begin
                     s_axi_wdata  <= data;
-                    s_axi_wstrb  <= 4'b1111;
+                    s_axi_wstrb  <= be;
                     s_axi_wvalid <= 1;
                     @(posedge s_axi_aclk);
                     while (s_axi_wready == 0) begin
@@ -142,7 +144,15 @@ module tb_{{ top_name }}_regs;
                     s_axi_bready <= 0;
                 end
             join
-            $display("Write: addr = %x, data = %x, resp = %x\n", addr, data, resp);
+            $display("Write: addr = %x, data = %x, be = %x, resp = %x", addr, data, be, resp);
+        end
+    endtask
+
+    task axi_write(input  reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr,
+                   input  reg [{{ '{:2d}'.format(data_width-1) }}:0] data,
+                   output reg [ 1:0] resp);
+        begin
+            axi_write_be(addr, data, { {{ '{:2.0f}'.format(data_width/8) }}{1'b1} }, resp);
         end
     endtask
 
@@ -175,7 +185,7 @@ module tb_{{ top_name }}_regs;
                     s_axi_rready <= 0;
                 end
             join
-            $display("Read: addr = %x, data = %x, resp = %x\n", addr, data, resp);
+            $display("Read: addr = %x, data = %x, resp = %x", addr, data, resp);
         end
     endtask
 
@@ -251,10 +261,54 @@ module tb_{{ top_name }}_regs;
         .{{ '{: <40}'.format(mem.name + '_en') }}({{ mem.name }}_en),
         .{{ '{: <40}'.format(mem.name + '_we') }}({{ mem.name }}_we),
         .{{ '{: <40}'.format(mem.name + '_din') }}({{ mem.name }}_din),
+        .{{ '{: <40}'.format(mem.name + '_be') }}({{ mem.name }}_be),
         .{{ '{: <40}'.format(mem.name + '_dout') }}({{ mem.name }}_dout),
         .{{ '{: <40}'.format(mem.name + '_valid') }}({{ mem.name }}_valid)
         {%- endfor %}
     );
+
+    {%- for field in fields %}
+        {%- if field.implements_storage and field.is_sw_writable and field.is_hw_writable and field.is_sw_readable %}
+    // Check the one-cycle software override for {{ field.hierarchy }}.
+    always @(posedge s_axi_aclk) begin
+        if (s_axi_aresetn && DUT.int_wr_en && DUT.{{ field.name }}_strb) begin
+            #1;
+            if (DUT.{{ field.name }}_value !==
+                (({{ field.name }}_in & ~DUT.{{ field.name }}_sw_mask) |
+                 (DUT.int_wr_data[{{ field.msb }}:{{ field.lsb }}] & DUT.{{ field.name }}_sw_mask))) begin
+                errors = errors + 1;
+                $display("FAIL: {{ field.hierarchy }} software/hardware merge mismatch");
+            end
+        end
+    end
+        {%- endif %}
+    {%- endfor %}
+
+
+    // Verify that external memory byte enables mirror AXI WSTRB on writes,
+    // remain zero on reads, and suppress physical accesses for WSTRB=0.
+    {%- for mem in mems %}
+    always @(posedge s_axi_aclk) begin
+        if (s_axi_aresetn && DUT.int_rd_en && DUT.{{ mem.name }}_strb) begin
+            if ({{ mem.name }}_be !== { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} }) begin
+                errors = errors + 1;
+                $display("FAIL: {{ mem.hierarchy }} byte enable asserted during read");
+            end
+        end
+        if (s_axi_aresetn && DUT.int_wr_en && DUT.{{ mem.name }}_strb) begin
+            if (DUT.int_wr_strb == { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} }) begin
+                if ({{ mem.name }}_en || {{ mem.name }}_we || (|{{ mem.name }}_be)) begin
+                    errors = errors + 1;
+                    $display("FAIL: {{ mem.hierarchy }} WSTRB=0 issued a physical memory access");
+                end
+            end else if (!{{ mem.name }}_en || !{{ mem.name }}_we ||
+                         ({{ mem.name }}_be !== DUT.int_wr_strb)) begin
+                errors = errors + 1;
+                $display("FAIL: {{ mem.hierarchy }} byte enable/write mismatch");
+            end
+        end
+    end
+    {%- endfor %}
 
 
     // Memory Model
@@ -268,6 +322,7 @@ module tb_{{ top_name }}_regs;
     reg [{{ '{:2d}'.format(mem.addr_width-1) }}:0] {{ mem.name}}_rd_addr_pipe [0:MEMORY_READ_LATENCY-1];
     reg [MEMORY_READ_LATENCY-1:0] {{ mem.name}}_rd_valid_pipe;
     integer {{ mem.name}}_rd_idx;
+    integer {{ mem.name}}_be_idx;
 
     always @(posedge s_axi_aclk) begin
         if (s_axi_aresetn == 1'b0) begin
@@ -292,7 +347,12 @@ module tb_{{ top_name }}_regs;
 
     always @(posedge s_axi_aclk) begin
         if ({{ mem.name}}_en == 1'b1 && {{ mem.name}}_we == 1'b1) begin
-            {{ mem.name}}_mem[{{ mem.name}}_addr] <= {{ mem.name }}_din;
+            for ({{ mem.name}}_be_idx = 0; {{ mem.name}}_be_idx < {{ mem.width // 8 }}; {{ mem.name}}_be_idx = {{ mem.name}}_be_idx + 1) begin
+                if ({{ mem.name}}_be[{{ mem.name}}_be_idx]) begin
+                    {{ mem.name}}_mem[{{ mem.name}}_addr][{{ mem.name}}_be_idx*8 +: 8] <=
+                        {{ mem.name }}_din[{{ mem.name}}_be_idx*8 +: 8];
+                end
+            end
         end
     end
 
@@ -313,6 +373,8 @@ module tb_{{ top_name }}_regs;
         reg [{{ '{:2d}'.format(addr_width-1) }}:0] addr;
         reg [{{ '{:2d}'.format(data_width-1) }}:0] wdata;
         reg [{{ '{:2d}'.format(data_width-1) }}:0] rdata;
+        reg [{{ '{:2d}'.format(data_width-1) }}:0] expected;
+        reg [{{ '{:2.0f}'.format(data_width/8-1) }}:0] be;
         reg [ 1:0] resp;
         integer i;
 
@@ -343,12 +405,45 @@ module tb_{{ top_name }}_regs;
                 {%- if field.is_hw_writable %}
         check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
                    ({{ data_width }}'({{ field.name }}_in) << {{ field.lsb }}) & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
+        expected = ({{ data_width }}'({{ field.name }}_in) << {{ field.lsb }}) & {{ data_width }}'h{{ '{:x}'.format(field.mask) }};
                 {%- elif field.is_sw_writable %}
         check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
                    wdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
+        expected = wdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }};
                 {%- else %}
         check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
                    ({{ data_width }}'h{{ '{:x}'.format(field.reset) }} << {{ field.lsb }}) & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
+        expected = ({{ data_width }}'h{{ '{:x}'.format(field.reset) }} << {{ field.lsb }}) & {{ data_width }}'h{{ '{:x}'.format(field.mask) }};
+                {%- endif %}
+            {%- endif %}
+            {%- if field.implements_storage and field.is_sw_writable %}
+        // Exercise every byte lane covered by {{ field.hierarchy }}.
+                {%- for wstrb_case in field.wstrb_cases %}
+        be = {{ '{:2.0f}'.format(data_width/8) }}'h{{ '{:x}'.format(wstrb_case.be) }};
+        wdata = $urandom();
+        axi_write_be(addr, wdata, be, resp);
+        check_resp(addr, resp);
+                {%- if not field.is_hw_writable %}
+        expected = (expected & ~{{ data_width }}'h{{ '{:x}'.format(wstrb_case.mask) }}) |
+                   (wdata & {{ data_width }}'h{{ '{:x}'.format(wstrb_case.mask) }});
+                {%- endif %}
+                {%- if field.is_sw_readable and not field.is_hw_writable %}
+        axi_read(addr, rdata, resp);
+        check_resp(addr, resp);
+        check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
+                   expected & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
+                {%- endif %}
+                {%- endfor %}
+
+        // WSTRB=0 acknowledges normally without changing software-owned bits.
+        wdata = $urandom();
+        axi_write_be(addr, wdata, { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} }, resp);
+        check_resp(addr, resp);
+                {%- if field.is_sw_readable and not field.is_hw_writable %}
+        axi_read(addr, rdata, resp);
+        check_resp(addr, resp);
+        check_data(addr, rdata & {{ data_width }}'h{{ '{:x}'.format(field.mask) }},
+                   expected & {{ data_width }}'h{{ '{:x}'.format(field.mask) }});
                 {%- endif %}
             {%- endif %}
         {%- endfor %}
@@ -363,6 +458,18 @@ module tb_{{ top_name }}_regs;
             axi_write(addr, wdata, resp);
             check_resp(addr, resp);
         end
+        // Partial byte write through the external memory byte-enable interface.
+        addr = {{ addr_width }}'('h{{ '{:x}'.format(mem.address) }});
+        wdata = $urandom();
+        be = {{ '{:2.0f}'.format(data_width/8) }}'h5;
+        {{ mem.name }}_exp[0] = ({{ mem.name }}_exp[0] & ~{{ mem.width }}'h00ff00ff) |
+                               (wdata[{{ mem.width-1 }}:0] & {{ mem.width }}'h00ff00ff);
+        axi_write_be(addr, wdata, be, resp);
+        check_resp(addr, resp);
+        // WSTRB=0 must not issue a physical memory write, but still responds OK.
+        wdata = $urandom();
+        axi_write_be(addr, wdata, { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} }, resp);
+        check_resp(addr, resp);
             {%- endif %}
             {%- if mem.is_sw_readable %}
         for (i = 0; i < {{ mem.mementries }}; i = i + 1) begin

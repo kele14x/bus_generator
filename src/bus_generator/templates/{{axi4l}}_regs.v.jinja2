@@ -52,6 +52,7 @@ module {{ top_name }}_regs (
     output wire        {{ mem.name }}_en,
     output wire        {{ mem.name }}_we,
     output wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_din,
+    output wire [{{ '{:2.0f}'.format(data_width/8-1) }}:0] {{ mem.name }}_be,
     input  wire [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_dout,
     input  wire        {{ mem.name }}_valid
     {%- endfor %}
@@ -69,6 +70,8 @@ module {{ top_name }}_regs (
     reg  [ADDR_WIDTH-1:0] head_addr;
     reg  [DATA_WIDTH-1:0] head_wdata;
     reg  [STRB_WIDTH-1:0] head_wstrb;
+
+    wire [DATA_WIDTH-1:0] sw_byte_mask;
 
     reg                   ar_back_valid;
     reg  [ADDR_WIDTH-1:0] ar_back_addr;
@@ -159,6 +162,13 @@ module {{ top_name }}_regs (
     assign int_wr_strb    = head_wstrb;
     assign int_wr_en      = issue_write;
     assign int_rd_en      = issue_read;
+
+    genvar sw_byte_idx;
+    generate
+        for (sw_byte_idx = 0; sw_byte_idx < STRB_WIDTH; sw_byte_idx = sw_byte_idx + 1) begin : gen_sw_byte_mask
+            assign sw_byte_mask[sw_byte_idx*8 +: 8] = {8{int_wr_strb[sw_byte_idx]}};
+        end
+    endgenerate
 
     assign s_axi_bvalid  = b_pending != 6'd0;
     assign s_axi_bresp   = b_err_fifo[0] ? 2'b10 : 2'b00;
@@ -426,6 +436,10 @@ module {{ top_name }}_regs (
     // Field {{ field.hierarchy }} @'h{{ '{:x}'.format(field.address) }}[{{ field.msb }}:{{ field.lsb }}]
 
     reg [{{ field.width-1 }}:0] {{ field.name }}_value;
+    {%- if field.implements_storage and field.is_sw_writable %}
+    wire [{{ field.width-1 }}:0] {{ field.name }}_sw_mask;
+    assign {{ field.name }}_sw_mask = sw_byte_mask[{{ field.msb }}:{{ field.lsb }}];
+    {%- endif %}
     {%- if field.implements_storage %}
 
     always @(posedge aclk) begin
@@ -433,7 +447,13 @@ module {{ top_name }}_regs (
             {{ field.name }}_value <= 'h{{ '{:x}'.format(field.reset) }};
         {%- if field.is_sw_writable %}
         end else if (int_wr_en && {{ field.name }}_strb) begin
-            {{ field.name }}_value <= int_wr_data[{{ field.msb }}:{{ field.lsb }}];
+            {%- if field.is_hw_writable %}
+            {{ field.name }}_value <= ({{ field.name }}_in & ~{{ field.name }}_sw_mask) |
+                                       (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
+            {%- else %}
+            {{ field.name }}_value <= ({{ field.name }}_value & ~{{ field.name }}_sw_mask) |
+                                       (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
+            {%- endif %}
         {%- endif %}
         {%- if field.is_hw_writable %}
         end else begin
@@ -469,9 +489,11 @@ module {{ top_name }}_regs (
     // Memory {{ mem.hierarchy }} @'h{{ '{:x}'.format(mem.address) }}
 
     assign {{ mem.name }}_addr = int_addr[{{ mem.addr_msb }}:{{ mem.addr_lsb }}];
-    assign {{ mem.name }}_en   = ((int_wr_en || int_rd_en) && {{ mem.name }}_strb);
-    assign {{ mem.name }}_we   = (int_wr_en && {{ mem.name }}_strb);
+    assign {{ mem.name }}_en   = ((int_rd_en && {{ mem.name }}_strb) ||
+                                  (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb)));
+    assign {{ mem.name }}_we   = (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb));
     assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
+    assign {{ mem.name }}_be   = (int_wr_en && {{ mem.name }}_strb) ? int_wr_strb : {STRB_WIDTH{1'b0}};
     {%- endfor %}
 
 

@@ -150,6 +150,14 @@ class FieldsGatheringListener(GeneralListener):
             "low": node.low,
             "msb": node.msb,
             "lsb": node.lsb,
+            "wstrb_cases": [
+                {
+                    "be": 1 << byte,
+                    "mask": (2 ** (node.high + 1) - 2**node.low)
+                    & (0xFF << (byte * 8)),
+                }
+                for byte in range(node.low // 8, node.high // 8 + 1)
+            ],
             "implements_storage": node.implements_storage,
             "sw": node.get_property("sw").name,
             "is_sw_writable": node.is_sw_writable,
