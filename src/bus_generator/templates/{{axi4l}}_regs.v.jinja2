@@ -367,7 +367,11 @@ module {{ top_name }}_regs (
 
     wire {{ field.name }}_strb;
 
+    {%- if addr_width > addr_width_lsb %}
     assign {{ field.name }}_strb = (int_addr[{{ addr_width-1 }}:{{ addr_width_lsb }}] == 'h{{ '{:x}'.format(field.aligned_address) }});
+    {%- else %}
+    assign {{ field.name }}_strb = (int_addr == {{ addr_width }}'h{{ '{:x}'.format(field.address) }});
+    {%- endif %}
     {%- endfor %}
     {%- for mem in mems %}
 

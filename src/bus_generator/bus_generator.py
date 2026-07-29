@@ -179,6 +179,49 @@ def warn_unsupported_side_effects(top: AddrmapNode):
     RDLWalker(unroll=True).walk(top, UnsupportedSideEffectWarningListener())
 
 
+class UnsupportedDataWidthError(ValueError):
+    """Raised when an RDL component cannot fit the fixed AXI data bus."""
+
+
+class DataWidthValidationListener(RDLListener):
+    """Collect RDL components that cannot be represented on the AXI data bus."""
+
+    def __init__(self):
+        self.errors = []
+
+    def enter_Field(self, node: FieldNode):
+        width = node.high - node.low + 1
+        if width > DATA_WIDTH:
+            self.errors.append(
+                "Field '%s' is %d bits wide ([%d:%d]); it exceeds the fixed "
+                "%d-bit DATA_WIDTH."
+                % (node.get_path(), width, node.high, node.low, DATA_WIDTH)
+            )
+        elif node.high >= DATA_WIDTH:
+            self.errors.append(
+                "Field '%s' uses bits [%d:%d], which do not fit the fixed "
+                "%d-bit DATA_WIDTH."
+                % (node.get_path(), node.high, node.low, DATA_WIDTH)
+            )
+
+    def enter_Mem(self, node: MemNode):
+        width = node.get_property("memwidth")
+        if width > DATA_WIDTH:
+            self.errors.append(
+                "Memory '%s' has memwidth %d, which exceeds the fixed %d-bit "
+                "DATA_WIDTH."
+                % (node.get_path(), width, DATA_WIDTH)
+            )
+
+
+def validate_supported_data_widths(top: AddrmapNode):
+    """Reject RDL widths that the fixed 32-bit AXI4-Lite RTL cannot represent."""
+    listener = DataWidthValidationListener()
+    RDLWalker(unroll=True).walk(top, listener)
+    if listener.errors:
+        raise UnsupportedDataWidthError("\n".join(listener.errors))
+
+
 class FieldsGatheringListener(GeneralListener):
     def __init__(self):
         super().__init__()
@@ -321,6 +364,7 @@ def print_hierarchy(top: AddrmapNode):
 
 def convert(top: AddrmapNode, template_name: str):
     """Convert compiled node hierarchy to generator friendly format."""
+    validate_supported_data_widths(top)
     walker = RDLWalker(unroll=True)
 
     listener = FieldsGatheringListener()
@@ -411,6 +455,12 @@ def cli(argv=None):
         top = root.top
     except RuntimeError:
         # A compilation error occurred. Exit with error code
+        sys.exit(1)
+
+    try:
+        validate_supported_data_widths(top)
+    except UnsupportedDataWidthError as error:
+        logging.error("%s", error)
         sys.exit(1)
 
     warn_unsupported_side_effects(top)

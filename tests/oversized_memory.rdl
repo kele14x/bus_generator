@@ -1,0 +1,8 @@
+addrmap oversized_memory {
+    default memwidth = 64;
+
+    external mem {
+        mementries = 1;
+        sw = rw;
+    } buffer @ 0x0;
+};

@@ -1,0 +1,9 @@
+addrmap oversized_field {
+    default regwidth = 64;
+    default sw = rw;
+    default hw = r;
+
+    reg {
+        field { } value[63:0] = 0x0;
+    } control @ 0x0;
+};

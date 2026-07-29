@@ -2,6 +2,8 @@
 """Generation tests: render every output format and check the produced files."""
 
 import os
+import shutil
+import subprocess
 
 import pytest
 
@@ -23,6 +25,83 @@ EXPECTED = {
     "c_header": (lambda top: f"{top}.h", ["#define"]),
     "tb_axi4l": (lambda top: f"tb_{top}_regs.v", ["TEST PASSED", "TEST FAILED"]),
 }
+
+
+def _compile_rtl(rtl, tmp_path):
+    """Compile one generated RTL file with the first available HDL compiler."""
+    vlog = shutil.which("vlog")
+    vlib = shutil.which("vlib")
+    if vlog and vlib:
+        work = tmp_path / "work"
+        create_work = subprocess.run(
+            [vlib, str(work)], capture_output=True, text=True
+        )
+        assert create_work.returncode == 0, create_work.stdout + create_work.stderr
+        result = subprocess.run(
+            [vlog, "-work", str(work), str(rtl)], capture_output=True, text=True
+        )
+    elif iverilog := shutil.which("iverilog"):
+        result = subprocess.run(
+            [iverilog, "-g2012", "-tnull", str(rtl)],
+            capture_output=True,
+            text=True,
+        )
+    elif verilator := shutil.which("verilator"):
+        result = subprocess.run(
+            [verilator, "--lint-only", str(rtl)], capture_output=True, text=True
+        )
+    else:
+        pytest.skip("no supported HDL compiler installed")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_generate_small_address_map_uses_full_address_decode(tmp_path):
+    """A single word must not produce a reversed address part-select."""
+    out = tmp_path / "axi4l"
+    main(["tests/small_address_map.rdl", "-o", str(out), "-t", "axi4l"])
+
+    rtl = (out / "small_address_map_regs.v").read_text()
+    assert "assign control_value_strb = (int_addr == 2'h0);" in rtl
+    assert "int_addr[1:2]" not in rtl
+
+
+def test_small_address_map_rtl_compiles(tmp_path):
+    """The minimum-size generated RTL compiles with an installed simulator."""
+    out = tmp_path / "axi4l"
+    main(["tests/small_address_map.rdl", "-o", str(out), "-t", "axi4l"])
+
+    _compile_rtl(out / "small_address_map_regs.v", tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("rdl", "expected_error"),
+    [
+        pytest.param(
+            "tests/oversized_field.rdl",
+            "Field 'oversized_field.control.value' is 64 bits wide ([63:0]); "
+            "it exceeds the fixed 32-bit DATA_WIDTH.",
+            id="field",
+        ),
+        pytest.param(
+            "tests/oversized_memory.rdl",
+            "Memory 'oversized_memory.buffer' has memwidth 64, which exceeds "
+            "the fixed 32-bit DATA_WIDTH.",
+            id="memory",
+        ),
+    ],
+)
+def test_generate_rejects_oversized_input(tmp_path, caplog, rdl, expected_error):
+    """Inputs wider than the fixed AXI4-Lite bus fail before rendering RTL."""
+    out = tmp_path / "axi4l"
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(SystemExit) as error:
+            main([rdl, "-o", str(out), "-t", "axi4l"])
+
+    assert error.value.code == 1
+    assert expected_error in caplog.text
+    assert not out.exists()
 
 
 @pytest.mark.parametrize("rdl,top", SAMPLES)

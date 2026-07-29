@@ -1,0 +1,8 @@
+addrmap small_address_map {
+    default sw = rw;
+    default hw = r;
+
+    reg {
+        field { } value[31:0] = 0x0;
+    } control @ 0x0;
+};

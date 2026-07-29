@@ -207,7 +207,17 @@ Recommended fix:
 - Reject fields/memories wider than the supported 32-bit bus unless multiword access is implemented.
 - Add boundary fixtures for one-word maps, non-power-of-two maps, and oversized fields.
 
-Status: Confirmed by Questa compilation
+Status: Fixed (2026-07-30)
+
+Verification:
+
+- Minimum-width maps now use a full-address equality decode instead of a
+  reversed/out-of-bounds part-select.
+- Fields and memories wider than the fixed 32-bit AXI data bus are rejected
+  before rendering with a path-specific error; no truncated RTL is emitted.
+- Added one-word, oversized-field, and oversized-memory fixtures/tests.
+- Questa compilation of the one-word generated RTL passes with zero errors and
+  warnings; oversized input exits with code 1 and the expected error.
 
 ### [MEDIUM] Distribution version and runtime version are inconsistent
 
