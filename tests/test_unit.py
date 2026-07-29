@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Pure-Python unit tests for the bus_generator CLI and internals."""
 
+import subprocess
+import sys
+
 import pytest
 
 from bus_generator import main
@@ -11,6 +14,7 @@ from bus_generator.bus_generator import (
     convert,
     discover_templates,
     parse_arguments,
+    warn_unsupported_side_effects,
 )
 from systemrdl import RDLCompiler, RDLWalker
 
@@ -19,6 +23,7 @@ FIELD_ACCESS_RDL = "tests/field_access.rdl"
 MEM_ACCESS_RDL = "tests/mem_access.rdl"
 RAM_RDL = "tests/ram.rdl"
 SIMPLE_RDL = "tests/simple.rdl"
+SIDE_EFFECTS_RDL = "tests/side_effects.rdl"
 
 
 def _compile(rdl_path):
@@ -138,6 +143,70 @@ def test_field_access_permissions():
     assert by_name["w_only_w_only"]["sw"] == "w"
     assert not by_name["w_only_w_only"]["is_sw_readable"]
     assert by_name["w_only_w_only"]["is_sw_writable"]
+
+
+# ---------------------------------------------------------------------------
+# Unsupported SystemRDL side-effect compatibility warnings
+# ---------------------------------------------------------------------------
+
+
+def test_unsupported_side_effects_warn_with_field_path(caplog):
+    top = _compile(SIDE_EFFECTS_RDL)
+
+    with caplog.at_level("WARNING"):
+        warn_unsupported_side_effects(top)
+
+    warnings = [record.getMessage() for record in caplog.records]
+    assert warnings == [
+        "Ignoring unsupported SystemRDL side-effect semantics on field "
+        "'side_effects.effects.read_clear': onread=rclr",
+        "Ignoring unsupported SystemRDL side-effect semantics on field "
+        "'side_effects.effects.write_set': onwrite=woset",
+        "Ignoring unsupported SystemRDL side-effect semantics on field "
+        "'side_effects.effects.write_once_rw': sw=rw1 (write-once)",
+        "Ignoring unsupported SystemRDL side-effect semantics on field "
+        "'side_effects.effects.write_once_w': sw=w1 (write-once)",
+        "Ignoring unsupported SystemRDL side-effect semantics on memory "
+        "'side_effects.write_once_mem': sw=rw1 (write-once)",
+    ]
+
+
+def test_ordinary_software_accesses_do_not_warn(caplog):
+    top = _compile(SIDE_EFFECTS_RDL)
+
+    with caplog.at_level("WARNING"):
+        warn_unsupported_side_effects(top)
+
+    warning_messages = [record.getMessage() for record in caplog.records]
+    assert all("ordinary" not in message for message in warning_messages)
+
+
+@pytest.mark.parametrize(
+    ("quiet", "expect_warnings"),
+    [
+        pytest.param(False, True, id="default-verbosity"),
+        pytest.param(True, False, id="quiet"),
+    ],
+)
+def test_cli_reports_side_effect_warnings_at_default_verbosity(
+    tmp_path, quiet, expect_warnings
+):
+    command = [
+        sys.executable,
+        "-m",
+        "bus_generator.bus_generator",
+        SIDE_EFFECTS_RDL,
+        "-o",
+        str(tmp_path),
+    ]
+    if quiet:
+        command.append("-q")
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0
+    assert (tmp_path / "side_effects_regs.v").is_file()
+    assert ("Ignoring unsupported SystemRDL side-effect semantics" in result.stderr) is expect_warnings
 
 
 # ---------------------------------------------------------------------------

@@ -121,7 +121,24 @@ Recommended fix:
 - Validate the elaborated RDL model and fail generation with a clear unsupported-feature error.
 - Document the supported SystemRDL subset.
 
-Status: Open
+Status: Partially addressed (2026-07-30; semantics deferred)
+
+Current behavior:
+
+- Generation continues with the existing behavior, but emits `WARNING` messages
+  for fields using unsupported `onread`, `onwrite`, `sw=rw1`, or `sw=w1`
+  semantics.
+- Warning messages include the elaborated field path and the ignored property.
+- The side-effect semantics themselves remain unsupported and are intentionally
+  deferred; generated RTL must not be treated as implementing them.
+
+Verification:
+
+- Added `tests/side_effects.rdl` covering `onread=rclr`, `onwrite=woset`,
+  `sw=rw1`, `sw=w1`, and ordinary `rw`, `r`, and `w` fields.
+- CLI generation succeeds and emits four warnings for the unsupported fields.
+- Ordinary `gpio.rdl` generation emits no side-effect warnings.
+- `-q` suppresses the warnings while generation still succeeds.
 
 ### [MEDIUM] Memory decode rounds regions up to a power of two
 

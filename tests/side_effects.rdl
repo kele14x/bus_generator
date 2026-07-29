@@ -1,0 +1,22 @@
+addrmap side_effects {
+    default regwidth = 32;
+
+    reg {
+        field { sw = rw;  onread = rclr;  } read_clear[7:0];
+        field { sw = rw;  onwrite = woset; } write_set[15:8];
+        field { sw = rw1; } write_once_rw[23:16];
+        field { sw = w1;  } write_once_w[31:24];
+    } effects @0x0;
+
+    reg {
+        field { sw = rw; } ordinary_rw[7:0];
+        field { sw = r;  } ordinary_r[15:8];
+        field { sw = w;  } ordinary_w[23:16];
+    } ordinary @0x4;
+
+    external mem {
+        memwidth = 32;
+        mementries = 2;
+        sw = rw1;
+    } write_once_mem @0x100;
+};

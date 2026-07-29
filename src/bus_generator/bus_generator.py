@@ -23,6 +23,7 @@ from systemrdl.node import (
     SignalNode,
     VectorNode,
 )
+from systemrdl.rdltypes import AccessType
 
 try:
     cwd = os.path.dirname(os.path.abspath(__file__))
@@ -134,6 +135,48 @@ class ModelPrintingListener(GeneralListener):
 
     def enter_Signal(self, node: SignalNode):
         print(f"signal")
+
+
+class UnsupportedSideEffectWarningListener(RDLListener):
+    """Warn when field side-effect semantics cannot be represented in RTL."""
+
+    def enter_Field(self, node: FieldNode):
+        ignored_semantics = []
+
+        onread = node.get_property("onread")
+        if onread is not None:
+            ignored_semantics.append(f"onread={onread.name}")
+
+        onwrite = node.get_property("onwrite")
+        if onwrite is not None:
+            ignored_semantics.append(f"onwrite={onwrite.name}")
+
+        sw = node.get_property("sw")
+        if sw in {AccessType.rw1, AccessType.w1}:
+            ignored_semantics.append(f"sw={sw.name} (write-once)")
+
+        if ignored_semantics:
+            logging.warning(
+                "Ignoring unsupported SystemRDL side-effect semantics on field "
+                "'%s': %s",
+                node.get_path(),
+                ", ".join(ignored_semantics),
+            )
+
+    def enter_Mem(self, node: MemNode):
+        sw = node.get_property("sw")
+        if sw in {AccessType.rw1, AccessType.w1}:
+            logging.warning(
+                "Ignoring unsupported SystemRDL side-effect semantics on memory "
+                "'%s': sw=%s (write-once)",
+                node.get_path(),
+                sw.name,
+            )
+
+
+def warn_unsupported_side_effects(top: AddrmapNode):
+    """Emit compatibility warnings for unsupported field side effects."""
+    RDLWalker(unroll=True).walk(top, UnsupportedSideEffectWarningListener())
 
 
 class FieldsGatheringListener(GeneralListener):
@@ -371,6 +414,8 @@ def cli(argv=None):
     except RuntimeError:
         # A compilation error occurred. Exit with error code
         sys.exit(1)
+
+    warn_unsupported_side_effects(top)
 
     # Print
     if args.print:
