@@ -87,7 +87,7 @@ def test_discover_templates():
 
 
 def test_parse_arguments_defaults():
-    args = parse_arguments(["foo.rdl"])
+    args = parse_arguments(["foo.rdl", "--print"])
     assert args.input == ["foo.rdl"]
     assert args.templates == ["axi4l"]
 
@@ -120,6 +120,52 @@ def test_cli_missing_input_raises():
     # console script).
     with pytest.raises(FileNotFoundError):
         main(["./does_not_exist.rdl", "-o", "ignored"])
+
+
+def test_cli_requires_output_or_print():
+    result = subprocess.run(
+        [sys.executable, "-m", "bus_generator.bus_generator", GPIO_RDL],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "error: either --output or --print is required" in result.stderr
+
+
+def test_cli_print_without_output_displays_hierarchy():
+    result = subprocess.run(
+        [sys.executable, "-m", "bus_generator.bus_generator", GPIO_RDL, "--print"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "gpio @0x0(0x0) addrmap, size: 8" in result.stdout
+    assert "\tdata @0x0(0x0) reg" in result.stdout
+
+
+def test_cli_generates_with_output(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bus_generator.bus_generator",
+            GPIO_RDL,
+            "--output",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert (tmp_path / "gpio_regs.v").is_file()
+    assert result.stdout == ""
 
 
 # ---------------------------------------------------------------------------

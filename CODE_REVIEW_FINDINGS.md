@@ -325,10 +325,18 @@ A user can mistake a no-op invocation for a successful generation.
 
 Recommended fix:
 
-- Require `--output`, or
-- Add an explicit stdout/dry-run mode and fail when neither output nor display mode is selected.
+- Require an output destination unless the explicit `--print` display mode is selected.
+- Add regression coverage for rejected no-output invocation, hierarchy printing, and normal artifact generation.
 
-Status: Open
+Status: Fixed (2026-07-30)
+
+Verification:
+
+- `uv run bus-generator tests/gpio.rdl` now exits 2 with an actionable argparse error.
+- `--print` without `--output` exits 0 and prints the hierarchy.
+- `--output` generates the expected `gpio_regs.v` artifact.
+- Focused CLI tests: 8 passed.
+- Full pytest: 67 passed, 26 skipped.
 
 ### [LOW] Nested output directories are not created
 

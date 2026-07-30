@@ -352,6 +352,8 @@ def parse_arguments(argv=None) -> argparse.Namespace:
     # Get the version string of this script.
     parser.add_argument("-V", "--version", action="version", version=__version__)
     args = parser.parse_args(argv)
+    if args.output is None and not args.print:
+        parser.error("either --output or --print is required")
     return args
 
 
