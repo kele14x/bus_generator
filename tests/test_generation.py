@@ -66,6 +66,31 @@ def test_generate_small_address_map_uses_full_address_decode(tmp_path):
     assert "int_addr[1:2]" not in rtl
 
 
+def test_generate_axi4l_limits_b_responses_to_two_entries(tmp_path):
+    """The B response queue must match the two-entry R response capacity."""
+    out = tmp_path / "axi4l"
+    main(["tests/simple.rdl", "-o", str(out), "-t", "axi4l"])
+
+    rtl = (out / "simple_regs.v").read_text()
+
+    assert "reg  [           1:0] b_outstanding;" in rtl
+    assert "reg  [           1:0] b_wait_ack;" in rtl
+    assert "reg  [           1:0] b_pending;" in rtl
+    assert "reg  [           1:0] b_err_fifo;" in rtl
+    assert "assign b_credit       = (b_outstanding != 2'd2) || b_hsk;" in rtl
+    assert "b_err_fifo[b_pending[0]] <= int_wr_err;" in rtl
+    assert "b_err_fifo[b_pending - 2'd1] <= int_wr_err;" in rtl
+    assert "for (b_idx = 0; b_idx < 1; b_idx = b_idx + 1) begin" in rtl
+    for stale in (
+        "6'd32",
+        "reg  [          31:0] b_err_fifo;",
+        "b_pending[4:0]",
+        "b_idx < 31",
+        "b_err_fifo[31]",
+    ):
+        assert stale not in rtl
+
+
 def test_small_address_map_rtl_compiles(tmp_path):
     """The minimum-size generated RTL compiles with an installed simulator."""
     out = tmp_path / "axi4l"
