@@ -278,6 +278,34 @@ Recommended fix:
 
 Status: Open
 
+Investigation note (2026-07-30):
+
+- A Questa/VSIM backend was prototyped locally; the ordinary self-checking
+  regression passed for all six samples under both `SIM=questa` and `SIM=vsim`.
+- The first stress failure is reproducible as:
+
+  ```text
+  SIM=questa uv run pytest -q 'tests/test_stress.py::test_stress_read_overlap[mem_access]'
+  ```
+
+  The exact collected case is:
+
+  ```text
+  tests/test_stress.py::test_stress_read_overlap[mem_access]
+  ```
+
+- DUT: `mem_access_regs`, generated at
+  `generated/axi4l/mem_access_regs.v`.
+- Scenario: `stress_read_overlap` issues 64 overlapped reads with R-channel
+  backpressure against the external-memory design.
+- Questa/cocotb reaches the DUT and then times out at `2,000,000 ns`; this is
+  not a simulator-command or compilation failure. The other 25 simulator
+  cases passed in the same `make sim` run.
+- A possible RTL/external-memory outstanding-read or handshake bug is
+  suspected, but it has not been independently confirmed yet. Keep this
+  finding open until the smallest failing transaction sequence and RTL root
+  cause are isolated.
+
 ### [LOW] CLI succeeds without producing output when `--output` is omitted
 
 Location:

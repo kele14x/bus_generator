@@ -9,8 +9,9 @@ and the pass/fail banner.
 
 The Verilog sources are read from the ``generated/`` tree (produced by
 ``make gen``) so manual edits to those files are picked up by re-running
-``make sim`` — the test never regenerates over them. Set ``SIM=verilator`` to
-run with Verilator; the default is ``SIM=icarus``.
+``make sim`` — the test never regenerates over them. Set ``SIM=icarus``,
+``SIM=verilator``, or ``SIM=questa`` (``SIM=vsim`` is an alias) to select a
+backend. The default is ``SIM=icarus``.
 """
 
 import os
@@ -19,6 +20,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from simulator_support import (
+    missing_simulator_commands,
+    normalize_simulator,
+    simulator_commands,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GENERATED = REPO_ROOT / "generated"
@@ -34,18 +40,16 @@ SAMPLES = [
 
 
 def _selected_simulator():
-    return os.environ.get("SIM", "icarus").lower()
+    return normalize_simulator(os.environ.get("SIM", "icarus"))
 
 
 def _need_simulator(sim):
-    if sim == "icarus":
-        if not shutil.which("iverilog") or not shutil.which("vvp"):
-            pytest.skip("iverilog/vvp not installed")
-    elif sim == "verilator":
-        if not shutil.which("verilator"):
-            pytest.skip("verilator not installed")
-    else:
-        pytest.fail(f"unsupported SIM={sim!r}; expected 'icarus' or 'verilator'")
+    try:
+        required = simulator_commands(sim)
+    except ValueError as error:
+        pytest.fail(str(error))
+    if missing_simulator_commands(sim, shutil.which):
+        pytest.skip(f"{'/'.join(required)} not installed")
 
 
 def _run_icarus(top, dut, tb, tmp_path):
@@ -101,6 +105,44 @@ def _run_verilator(top, dut, tb, tmp_path):
     return run_proc.returncode, run_proc.stdout + run_proc.stderr
 
 
+def _run_questa(top, dut, tb, tmp_path):
+    library_proc = subprocess.run(
+        ["vlib", "work"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert library_proc.returncode == 0, (
+        f"vlib failed:\n{library_proc.stdout}\n{library_proc.stderr}"
+    )
+
+    compile_proc = subprocess.run(
+        ["vlog", "-work", "work", str(dut), str(tb)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert compile_proc.returncode == 0, (
+        f"vlog failed:\n{compile_proc.stdout}\n{compile_proc.stderr}"
+    )
+
+    run_proc = subprocess.run(
+        [
+            "vsim",
+            "-c",
+            "-lib",
+            "work",
+            "-do",
+            "run -all; quit -f",
+            f"tb_{top}_regs",
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    return run_proc.returncode, run_proc.stdout + run_proc.stderr
+
+
 @pytest.mark.sim
 @pytest.mark.parametrize("top", SAMPLES)
 def test_self_check_tb(top, tmp_path):
@@ -114,8 +156,10 @@ def test_self_check_tb(top, tmp_path):
 
     if sim == "icarus":
         returncode, output = _run_icarus(top, dut, tb, tmp_path)
-    else:
+    elif sim == "verilator":
         returncode, output = _run_verilator(top, dut, tb, tmp_path)
+    else:
+        returncode, output = _run_questa(top, dut, tb, tmp_path)
 
     assert "TEST PASSED" in output, f"TB did not pass:\n{output}"
     assert "TEST FAILED" not in output, f"TB reported failures:\n{output}"

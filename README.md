@@ -35,3 +35,11 @@ uv run bus-generator gpio.rdl -o out -t axi4l c_header
 ```bash
 uv run pytest
 ```
+
+Simulator-backed tests use Icarus by default. Set ``SIM`` to choose the backend:
+``icarus``, ``verilator``, or ``questa``; ``vsim`` is accepted as an alias for
+Questa. For example:
+
+```bash
+SIM=questa uv run pytest -m sim
+```

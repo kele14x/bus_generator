@@ -11,14 +11,20 @@ C_HEADER_ARTIFACTS := $(addprefix $(GENERATED)/c_header/,$(addsuffix .h,$(SAMPLE
 TB_AXI4L_ARTIFACTS := $(addprefix $(GENERATED)/tb_axi4l/tb_,$(addsuffix _regs.v,$(SAMPLES)))
 ARTIFACTS := $(AXI4L_ARTIFACTS) $(C_HEADER_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 
-.PHONY: all test unit artifacts gen sim stress fast clean
+.PHONY: all test unit artifacts gen sim stress fast clean help
+
+# Show available targets and simulator selection. SIM defaults to icarus;
+# supported values are icarus, verilator, questa, and vsim (an alias for questa).
+help:
+	@echo "Targets: all/test unit artifacts gen sim stress fast clean"
+	@echo "Simulator: SIM=icarus (default), SIM=verilator, or SIM=questa/vsim"
 
 # Run every test layer (unit + generation + simulation).
 all test: unit gen sim
 
-# Pure-Python unit tests (CLI, listeners, discover_templates, convert).
+# Pure-Python unit tests (CLI, listeners, simulator selection, discover_templates, convert).
 unit:
-	$(PYTEST) tests/test_unit.py
+	$(PYTEST) tests/test_unit.py tests/test_simulator_support.py
 
 # Render every sample x template into ./generated/<template>/ for reuse.
 artifacts: $(ARTIFACTS)
