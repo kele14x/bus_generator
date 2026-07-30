@@ -358,8 +358,8 @@ module tb_{{ top_name }}_regs;
 
     // {{ mem.hierarchy }}
 
-    reg [31:0] {{ mem.name}}_mem [0:{{ mem.mementries }}];
-    reg [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name}}_exp [0:{{ mem.mementries }}];
+    reg [31:0] {{ mem.name}}_mem [0:{{ mem.mementries - 1 }}];
+    reg [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name}}_exp [0:{{ mem.mementries - 1 }}];
     reg [{{ '{:2d}'.format(mem.addr_width-1) }}:0] {{ mem.name}}_rd_addr_pipe [0:MEMORY_READ_LATENCY-1];
     reg [MEMORY_READ_LATENCY-1:0] {{ mem.name}}_rd_valid_pipe;
     integer {{ mem.name}}_rd_idx;
@@ -432,7 +432,7 @@ module tb_{{ top_name }}_regs;
         // {{ field.hierarchy }}
         addr = 'h{{ '{:x}'.format(field.address) }};
             {%- if field.is_hw_writable %}
-        {{ field.name }}_in <= $urandom();
+        {{ field.name }}_in <= {{ field.width }}'($urandom());
         @(posedge s_axi_aclk);
             {%- endif %}
             {%- if field.is_sw_writable %}

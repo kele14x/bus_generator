@@ -378,7 +378,11 @@ module {{ top_name }}_regs (
     wire {{ mem.name }}_strb;
     reg  {{ mem.name }}_rd_sel;
 
+    {%- if mem.address == 0 %}
+    assign {{ mem.name }}_strb = ({1'b0, int_addr} < {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address + mem.size) }});
+    {%- else %}
     assign {{ mem.name }}_strb = (({1'b0, int_addr} >= {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address) }}) && ({1'b0, int_addr} < {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address + mem.size) }}));
+    {%- endif %}
     {%- endfor %}
 
     assign rd_mem_pending = 1'b0{% for mem in mems %}{% if mem.is_sw_readable %} || {{ mem.name }}_rd_sel{% endif %}{% endfor %};
@@ -527,20 +531,27 @@ module {{ top_name }}_regs (
     //--------------------------------------------------------------------------
 
     reg [DATA_WIDTH-1:0] field_rd_data;
+    {%- set readable_fields = fields | selectattr("is_sw_readable") | list %}
+    {%- if readable_fields %}
     reg [DATA_WIDTH-1:0] field_rd_data_next;
+    {%- else %}
+    wire [DATA_WIDTH-1:0] field_rd_data_next;
+
+    assign field_rd_data_next = {DATA_WIDTH{1'b0}};
+    {%- endif %}
 
     reg        field_strb;
 
+    {%- if readable_fields %}
     always @(*) begin
         field_rd_data_next = {DATA_WIDTH{1'b0}};
-        {%- for field in fields %}
-        {%- if field.is_sw_readable %}
+        {%- for field in readable_fields %}
         if (int_rd_en && {{ field.name }}_strb) begin
             field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] = field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] | {{ field.name }}_value;
         end
-        {%- endif %}
         {%- endfor %}
     end
+    {%- endif %}
 
     always @(posedge aclk) begin
         if (!aresetn) begin
