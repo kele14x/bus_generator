@@ -168,6 +168,27 @@ def test_cli_generates_with_output(tmp_path):
     assert result.stdout == ""
 
 
+def test_cli_generates_with_nested_output(tmp_path):
+    output_dir = tmp_path / "build" / "generated"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bus_generator.bus_generator",
+            GPIO_RDL,
+            "--output",
+            str(output_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert (output_dir / "gpio_regs.v").is_file()
+    assert result.stdout == ""
+
+
 # ---------------------------------------------------------------------------
 # Listeners on gpio.rdl
 # ---------------------------------------------------------------------------

@@ -354,7 +354,15 @@ os.makedirs(output_dir, exist_ok=True)
 
 Keep the existing validation for a path that already exists as a non-directory.
 
-Status: Confirmed by CLI execution
+Status: Fixed (2026-07-30)
+
+Verification:
+
+- Nested output generation now creates missing parent directories recursively.
+- Existing regular-file conflict handling remains unchanged.
+- Focused nested-output test: 1 passed.
+- Full pytest: 68 passed, 26 skipped.
+- Direct CLI smoke test generated `gpio_regs.v` under a previously missing nested output path.
 
 ## Verification Notes
 

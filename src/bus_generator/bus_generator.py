@@ -415,7 +415,7 @@ def write_file(output_dir, content, name):
         sys.exit(2)
     else:
         logging.info(f'Create folder "{output_dir}".')
-        os.mkdir(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
 
     target_file = os.path.join(output_dir, name)
 
