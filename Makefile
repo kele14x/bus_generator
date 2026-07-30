@@ -13,13 +13,13 @@ ARTIFACTS := $(AXI4L_ARTIFACTS) $(C_HEADER_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 
 .PHONY: all test unit artifacts gen sim stress fast clean help
 
-# Show available targets and simulator selection. SIM defaults to icarus;
-# supported values are icarus, verilator, questa, and vsim (an alias for questa).
+# Show available targets and simulator selection. Simulator-marked tests require
+# SIM; supported values are icarus, verilator, questa, and vsim (an alias for questa).
 help:
 	@echo "Targets: all/test unit artifacts gen sim stress fast clean"
-	@echo "Simulator: SIM=icarus (default), SIM=verilator, or SIM=questa/vsim"
+	@echo "Simulator-marked tests require SIM=icarus, SIM=verilator, SIM=questa, or SIM=vsim"
 
-# Run every test layer (unit + generation + simulation).
+# Run every test layer (unit + generation + simulation; requires SIM).
 all test: unit gen sim
 
 # Pure-Python unit tests (CLI, listeners, simulator selection, discover_templates, convert).
@@ -45,11 +45,11 @@ $(GENERATED)/tb_axi4l/tb_%_regs.v: tests/%.rdl src/bus_generator/templates/tb_{{
 gen: artifacts
 	$(PYTEST) tests/test_generation.py
 
-# All sim-marked tests against reusable generated/ artifacts.
+# All sim-marked tests against reusable generated/ artifacts; requires SIM.
 sim: $(AXI4L_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 	$(PYTEST) -m sim
 
-# Cocotb random AXI4-Lite stress tests for all generated samples.
+# Cocotb random AXI4-Lite stress tests for all generated samples; requires SIM.
 stress: $(AXI4L_ARTIFACTS)
 	$(PYTEST) tests/test_stress.py
 

@@ -10,8 +10,8 @@ and the pass/fail banner.
 The Verilog sources are read from the ``generated/`` tree (produced by
 ``make gen``) so manual edits to those files are picked up by re-running
 ``make sim`` — the test never regenerates over them. Set ``SIM=icarus``,
-``SIM=verilator``, or ``SIM=questa`` (``SIM=vsim`` is an alias) to select a
-backend. The default is ``SIM=icarus``.
+``SIM=verilator``, ``SIM=questa``, or ``SIM=vsim`` (an alias for Questa) to
+select a backend. ``SIM`` is required; the selected backend must be installed.
 """
 
 import os
@@ -21,9 +21,7 @@ from pathlib import Path
 
 import pytest
 from simulator_support import (
-    missing_simulator_commands,
-    normalize_simulator,
-    simulator_commands,
+    require_simulator,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -40,16 +38,10 @@ SAMPLES = [
 
 
 def _selected_simulator():
-    return normalize_simulator(os.environ.get("SIM", "icarus"))
-
-
-def _need_simulator(sim):
     try:
-        required = simulator_commands(sim)
-    except ValueError as error:
-        pytest.fail(str(error))
-    if missing_simulator_commands(sim, shutil.which):
-        pytest.skip(f"{'/'.join(required)} not installed")
+        return require_simulator(os.environ, shutil.which)
+    except (RuntimeError, ValueError) as error:
+        pytest.fail(str(error), pytrace=False)
 
 
 def _run_icarus(top, dut, tb, tmp_path):
@@ -147,7 +139,6 @@ def _run_questa(top, dut, tb, tmp_path):
 @pytest.mark.parametrize("top", SAMPLES)
 def test_self_check_tb(top, tmp_path):
     sim = _selected_simulator()
-    _need_simulator(sim)
 
     dut = GENERATED / "axi4l" / f"{top}_regs.v"
     tb = GENERATED / "tb_axi4l" / f"tb_{top}_regs.v"

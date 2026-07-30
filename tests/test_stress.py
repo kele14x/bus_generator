@@ -8,9 +8,9 @@ times out.
 
 Sources are read from the ``generated/`` tree so manual edits to the RTL survive
 a re-run. Select Icarus, Verilator, or Questa with ``SIM=icarus``,
-``SIM=verilator``, or ``SIM=questa`` (``SIM=vsim`` is an alias); the default is
-Icarus. Tests skip when the selected simulator executables or ``cocotb_tools``
-are unavailable, or when the generated DUT is missing.
+``SIM=verilator``, ``SIM=questa``, or ``SIM=vsim`` (an alias for Questa).
+``SIM`` is required and the selected simulator executables must be available.
+Tests may skip when ``cocotb_tools`` or the generated DUT is missing.
 """
 
 import os
@@ -25,9 +25,7 @@ from bus_generator.bus_generator import FieldsGatheringListener, MemGatheringLis
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, SimTimeoutError, Timer, with_timeout
 from simulator_support import (
-    missing_simulator_commands,
-    normalize_simulator,
-    simulator_commands,
+    require_simulator,
 )
 from systemrdl import RDLCompiler, RDLWalker
 
@@ -721,13 +719,10 @@ async def stress_mixed_overlap(dut):
 
 
 def _run_cocotb_test(top, testcase):
-    sim = normalize_simulator(os.environ.get("SIM", "icarus"))
     try:
-        required = simulator_commands(sim)
-    except ValueError as error:
-        pytest.fail(str(error))
-    if missing_simulator_commands(sim, shutil.which):
-        pytest.skip(f"{'/'.join(required)} not installed")
+        sim = require_simulator(os.environ, shutil.which)
+    except (RuntimeError, ValueError) as error:
+        pytest.fail(str(error), pytrace=False)
     pytest.importorskip("cocotb_tools.runner")
 
     dut = GENERATED / "axi4l" / f"{top}_regs.v"

@@ -276,9 +276,23 @@ Recommended fix:
 - Generate temporary artifacts inside pytest fixtures and make missing artifacts a failure where simulation is required.
 - Document exactly which tests are unit, generation, and simulator-dependent.
 
-Status: Open
+Status: Fixed (2026-07-30; explicit simulator selection)
 
-Investigation note (2026-07-30):
+Verification:
+
+- Simulator-marked tests now require an explicit `SIM` value; there is no implicit Icarus default.
+- Unset `SIM` fails immediately with the supported simulator choices.
+- A selected but unavailable simulator fails immediately with the missing executable and PATH.
+- `SIM=questa` ordinary RTL regression: 6 passed.
+- `SIM=vsim` ordinary RTL regression: 6 passed.
+- Non-simulation suite: 77 passed, 26 deselected.
+
+Separate RTL investigation:
+
+- The `mem_access` `stress_read_overlap` timeout described below is not a
+  simulator-selection/skip problem. It remains a separate potential
+  external-memory RTL/handshake issue and must not be hidden by skipping the
+  simulator suite.
 
 - A Questa/VSIM backend was prototyped locally; the ordinary self-checking
   regression passed for all six samples under both `SIM=questa` and `SIM=vsim`.
