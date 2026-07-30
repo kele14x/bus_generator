@@ -23,7 +23,7 @@ import cocotb
 import pytest
 from bus_generator.bus_generator import FieldsGatheringListener, MemGatheringListener
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, SimTimeoutError, Timer, with_timeout
+from cocotb.triggers import RisingEdge, SimTimeoutError, with_timeout
 from simulator_support import (
     require_simulator,
 )
@@ -230,27 +230,26 @@ class AxiLiteMaster:
 
     async def _send(self, valid_sig, ready_sig):
         while True:
-            if int(ready_sig.value) == 1:
-                await RisingEdge(self.clk)
-                break
             await RisingEdge(self.clk)
-        valid_sig.value = 0
+            if int(valid_sig.value) == 1 and int(ready_sig.value) == 1:
+                valid_sig.value = 0
+                break
 
     async def _recv(self, valid_sig, ready_sig, read_payload):
         policy = random.choice(["early", "late"])
         ready_sig.value = 1 if policy == "early" else 0
         while True:
-            if int(valid_sig.value) == 1:
-                break
             await RisingEdge(self.clk)
-        payload = read_payload()
-        if policy == "late":
-            for _ in range(random.randint(0, MAX_BP)):
-                await RisingEdge(self.clk)
-            ready_sig.value = 1
-        await RisingEdge(self.clk)
-        ready_sig.value = 0
-        return payload
+            valid = int(valid_sig.value) == 1
+            ready = int(ready_sig.value) == 1
+            if valid and ready:
+                payload = read_payload()
+                ready_sig.value = 0
+                return payload
+            if valid and policy == "late":
+                for _ in range(random.randint(0, MAX_BP)):
+                    await RisingEdge(self.clk)
+                ready_sig.value = 1
 
     async def _drive_aw(self, addr):
         await self._idle()
@@ -320,11 +319,10 @@ class PipelinedWriteMaster:
 
     async def _send(self, valid_sig, ready_sig):
         while True:
-            if int(ready_sig.value) == 1:
-                await RisingEdge(self.clk)
-                break
             await RisingEdge(self.clk)
-        valid_sig.value = 0
+            if int(valid_sig.value) == 1 and int(ready_sig.value) == 1:
+                valid_sig.value = 0
+                break
 
     async def _drive_aw(self, addr):
         await self._idle()
@@ -358,11 +356,11 @@ class PipelinedWriteMaster:
         self.dut.s_axi_bready.value = 0
         gap = random.randint(0, MAX_BP_GAP)
         while self.b_count < expected:
+            await RisingEdge(self.clk)
             bvalid = int(self.dut.s_axi_bvalid.value)
             bready = int(self.dut.s_axi_bready.value)
             if bvalid == 1 and bready == 1:
                 bresp = int(self.dut.s_axi_bresp.value)
-                await RisingEdge(self.clk)
                 self.b_count += 1
                 if bresp != 0:
                     self.b_errors += 1
@@ -371,12 +369,10 @@ class PipelinedWriteMaster:
                     )
                 self.dut.s_axi_bready.value = 0
                 gap = random.randint(0, MAX_BP_GAP)
+            elif gap > 0:
+                gap -= 1
             else:
-                if gap > 0:
-                    gap -= 1
-                else:
-                    self.dut.s_axi_bready.value = 1
-                await RisingEdge(self.clk)
+                self.dut.s_axi_bready.value = 1
 
     async def read(self, addr):
         await self._idle()
@@ -385,13 +381,16 @@ class PipelinedWriteMaster:
         self.dut.s_axi_arvalid.value = 1
         await self._send(self.dut.s_axi_arvalid, self.dut.s_axi_arready)
         self.dut.s_axi_rready.value = 1
-        while int(self.dut.s_axi_rvalid.value) == 0:
+        while True:
             await RisingEdge(self.clk)
-        rdata = int(self.dut.s_axi_rdata.value)
-        rresp = int(self.dut.s_axi_rresp.value)
-        await RisingEdge(self.clk)
-        self.dut.s_axi_rready.value = 0
-        return rdata, rresp
+            if (
+                int(self.dut.s_axi_rvalid.value) == 1
+                and int(self.dut.s_axi_rready.value) == 1
+            ):
+                rdata = int(self.dut.s_axi_rdata.value)
+                rresp = int(self.dut.s_axi_rresp.value)
+                self.dut.s_axi_rready.value = 0
+                return rdata, rresp
 
 
 class PipelinedReadMaster:
@@ -423,42 +422,39 @@ class PipelinedReadMaster:
         self.dut.s_axi_arprot.value = 0
         self.dut.s_axi_arvalid.value = 1
         while True:
-            if int(self.dut.s_axi_arready.value) == 1:
-                await RisingEdge(self.clk)
-                break
             await RisingEdge(self.clk)
-        self.dut.s_axi_arvalid.value = 0
-        self.read_count += 1
+            if (
+                int(self.dut.s_axi_arvalid.value) == 1
+                and int(self.dut.s_axi_arready.value) == 1
+            ):
+                self.dut.s_axi_arvalid.value = 0
+                self.read_count += 1
+                break
 
     async def r_drain(self, expected, count):
-        async def tick():
-            await RisingEdge(self.clk)
-            await Timer(1, "step")
-
         self.dut.s_axi_rready.value = 0
         while self.r_count < count:
             for _ in range(random.randint(0, MAX_BP_GAP)):
-                await tick()
+                await RisingEdge(self.clk)
             self.dut.s_axi_rready.value = 1
-            await Timer(1, "step")
-            while int(self.dut.s_axi_rvalid.value) == 0:
-                await tick()
-            rdata = int(self.dut.s_axi_rdata.value)
-            rresp = int(self.dut.s_axi_rresp.value)
-            expected_data, mask, addr = expected[self.r_count]
-            await tick()
-            self.r_count += 1
-            if rresp != 0 or (rdata & mask) != expected_data:
-                self.r_errors += 1
-                self.dut._log.error(
-                    f"R[{self.r_count}] addr=0x{addr:02x} data=0x{rdata:08x} "
-                    f"expected=0x{expected_data:08x} mask=0x{mask:08x} resp={rresp}"
-                )
-            self.dut.s_axi_rready.value = 0
-            await tick()
-        self.dut.s_axi_rready.value = 1
-        await tick()
-        self.dut.s_axi_rready.value = 0
+            while True:
+                await RisingEdge(self.clk)
+                if (
+                    int(self.dut.s_axi_rvalid.value) == 1
+                    and int(self.dut.s_axi_rready.value) == 1
+                ):
+                    rdata = int(self.dut.s_axi_rdata.value)
+                    rresp = int(self.dut.s_axi_rresp.value)
+                    expected_data, mask, addr = expected[self.r_count]
+                    self.r_count += 1
+                    if rresp != 0 or (rdata & mask) != expected_data:
+                        self.r_errors += 1
+                        self.dut._log.error(
+                            f"R[{self.r_count}] addr=0x{addr:02x} data=0x{rdata:08x} "
+                            f"expected=0x{expected_data:08x} mask=0x{mask:08x} resp={rresp}"
+                        )
+                    self.dut.s_axi_rready.value = 0
+                    break
 
 
 def _load_rdl_metadata(top):
@@ -501,7 +497,8 @@ async def _setup_stress(dut, seed, master_cls):
     dut.s_axi_aresetn.value = 0
     master = master_cls(dut)
     model.drive_hw_inputs(dut)
-    await Timer(100, "ns")
+    for _ in range(10):
+        await RisingEdge(dut.s_axi_aclk)
     dut.s_axi_aresetn.value = 1
     await RisingEdge(dut.s_axi_aclk)
     await RisingEdge(dut.s_axi_aclk)
@@ -629,7 +626,8 @@ async def stress_mixed_overlap(dut):
     write_master = PipelinedWriteMaster(dut)
     read_master = PipelinedReadMaster(dut)
     model.drive_hw_inputs(dut)
-    await Timer(100, "ns")
+    for _ in range(10):
+        await RisingEdge(dut.s_axi_aclk)
     dut.s_axi_aresetn.value = 1
     await RisingEdge(dut.s_axi_aclk)
     await RisingEdge(dut.s_axi_aclk)
