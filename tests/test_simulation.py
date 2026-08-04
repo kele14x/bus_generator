@@ -8,10 +8,11 @@ counts mismatches, and ends with ``$finish`` (pass, prints ``TEST PASSED``) or
 and the pass/fail banner.
 
 The Verilog sources are read from the ``generated/`` tree (produced by
-``make gen``) so manual edits to those files are picked up by re-running
+``make artifacts``) so manual edits to those files are picked up by re-running
 ``make sim`` — the test never regenerates over them. Set ``SIM=icarus``,
 ``SIM=verilator``, ``SIM=questa``, or ``SIM=vsim`` (an alias for Questa) to
 select a backend. ``SIM`` is required; the selected backend must be installed.
+``SIM=iverilog`` is accepted as an alias for Icarus.
 """
 
 import os
@@ -143,7 +144,7 @@ def test_self_check_tb(top, tmp_path):
     dut = GENERATED / "axi4l" / f"{top}_regs.v"
     tb = GENERATED / "tb_axi4l" / f"tb_{top}_regs.v"
     if not dut.is_file() or not tb.is_file():
-        pytest.skip(f"missing {dut.name}/{tb.name}; run `make gen` first")
+        pytest.skip(f"missing {dut.name}/{tb.name}; run `make artifacts` first")
 
     if sim == "icarus":
         returncode, output = _run_icarus(top, dut, tb, tmp_path)

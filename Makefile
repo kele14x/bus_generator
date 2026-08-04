@@ -11,16 +11,17 @@ C_HEADER_ARTIFACTS := $(addprefix $(GENERATED)/c_header/,$(addsuffix .h,$(SAMPLE
 TB_AXI4L_ARTIFACTS := $(addprefix $(GENERATED)/tb_axi4l/tb_,$(addsuffix _regs.v,$(SAMPLES)))
 ARTIFACTS := $(AXI4L_ARTIFACTS) $(C_HEADER_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 
-.PHONY: all test unit artifacts gen sim stress fast clean help
+.PHONY: all test unit artifacts sim stress fast clean help
 
 # Show available targets and simulator selection. Simulator-marked tests require
-# SIM; supported values are icarus, verilator, questa, and vsim (an alias for questa).
+# SIM; supported values are icarus, verilator, questa, iverilog (an alias for
+# icarus), and vsim (an alias for questa).
 help:
-	@echo "Targets: all/test unit artifacts gen sim stress fast clean"
-	@echo "Simulator-marked tests require SIM=icarus, SIM=verilator, SIM=questa, or SIM=vsim"
+	@echo "Targets: all/test unit artifacts sim stress fast clean"
+	@echo "Simulator-marked tests require SIM=icarus, SIM=verilator, SIM=questa, SIM=iverilog, or SIM=vsim"
 
-# Run every test layer (unit + generation + simulation; requires SIM).
-all test: unit gen sim
+# Run every test layer (unit + artifacts + simulation; requires SIM).
+all test: unit artifacts sim
 
 # Pure-Python unit tests (CLI, listeners, simulator selection, discover_templates, convert).
 unit:
@@ -41,10 +42,6 @@ $(GENERATED)/tb_axi4l/tb_%_regs.v: tests/%.rdl src/bus_generator/templates/tb_{{
 	@mkdir -p $(@D)
 	uv run bus-generator $< -o $(@D) -t tb_axi4l
 
-# Render reusable artifacts, then run isolated generation content checks.
-gen: artifacts
-	$(PYTEST) tests/test_generation.py
-
 # All sim-marked tests against reusable generated/ artifacts; requires SIM.
 sim: $(AXI4L_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 	$(PYTEST) -m sim
@@ -53,8 +50,8 @@ sim: $(AXI4L_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 stress: $(AXI4L_ARTIFACTS)
 	$(PYTEST) tests/test_stress.py
 
-# Unit + generation only (fast path, no simulator needed).
-fast: unit gen
+# Unit + artifacts only (fast path, no simulator needed).
+fast: unit artifacts
 
 # Remove generated/local artifacts: bytecode caches, pytest cache, sim build
 # dirs, reusable generated output, and stray cocotb result XML files.

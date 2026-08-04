@@ -38,8 +38,8 @@ uv run pytest
 
 Simulator-marked tests require an explicit ``SIM`` selection; they do not choose
 a default or skip when the selected simulator is unavailable. Supported values
-are ``icarus``, ``verilator``, and ``questa``; ``vsim`` is accepted as an alias
-for Questa. For example:
+are ``icarus``, ``verilator``, and ``questa``; ``iverilog`` is accepted as an
+alias for Icarus and ``vsim`` as an alias for Questa. For example:
 
 ```bash
 SIM=icarus uv run pytest -m sim

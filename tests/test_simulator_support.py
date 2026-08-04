@@ -15,6 +15,7 @@ from simulator_support import (
     ("requested", "normalized"),
     [
         ("icarus", "icarus"),
+        ("IVERILOG", "icarus"),
         ("VERILATOR", "verilator"),
         ("questa", "questa"),
         ("VSIM", "questa"),
@@ -31,11 +32,15 @@ def test_selected_simulator_requires_an_explicit_nonblank_sim(requested):
     with pytest.raises(ValueError, match="SIM is required for simulator-marked tests") as error:
         selected_simulator(environ)
 
-    assert "SIM=icarus, SIM=verilator, SIM=questa, or SIM=vsim" in str(error.value)
+    assert "SIM=icarus, SIM=verilator, SIM=questa, SIM=iverilog, or SIM=vsim" in str(error.value)
 
 
 def test_selected_simulator_normalizes_vsim_alias():
     assert selected_simulator({"SIM": "vsim"}) == "questa"
+
+
+def test_selected_simulator_normalizes_iverilog_alias():
+    assert selected_simulator({"SIM": "iverilog"}) == "icarus"
 
 
 def test_questa_availability_requires_vlib_vlog_and_vsim():
@@ -56,6 +61,7 @@ def test_other_simulator_availability_requirements_are_preserved():
     ("requested", "available", "missing"),
     [
         ("icarus", {"iverilog"}, "vvp"),
+        ("iverilog", set(), "iverilog, vvp"),
         ("verilator", set(), "verilator"),
         ("questa", {"vlib", "vsim"}, "vlog"),
         ("vsim", {"vlib", "vlog"}, "vsim"),

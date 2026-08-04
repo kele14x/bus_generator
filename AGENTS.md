@@ -51,6 +51,7 @@ The simulator policy requires an explicit selection:
 SIM=icarus
 SIM=verilator
 SIM=questa
+SIM=iverilog
 SIM=vsim
 ```
 

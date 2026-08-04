@@ -8,7 +8,8 @@ times out.
 
 Sources are read from the ``generated/`` tree so manual edits to the RTL survive
 a re-run. Select Icarus, Verilator, or Questa with ``SIM=icarus``,
-``SIM=verilator``, ``SIM=questa``, or ``SIM=vsim`` (an alias for Questa).
+``SIM=verilator``, ``SIM=questa``, ``SIM=iverilog`` (an alias for Icarus), or
+``SIM=vsim`` (an alias for Questa).
 ``SIM`` is required and the selected simulator executables must be available.
 Tests may skip when ``cocotb_tools`` or the generated DUT is missing.
 """
@@ -725,7 +726,7 @@ def _run_cocotb_test(top, testcase):
 
     dut = GENERATED / "axi4l" / f"{top}_regs.v"
     if not dut.is_file():
-        pytest.skip(f"missing {dut}; run `make gen` first")
+        pytest.skip(f"missing {dut}; run `make artifacts` first")
 
     if str(TESTS_DIR) not in sys.path:
         sys.path.insert(0, str(TESTS_DIR))

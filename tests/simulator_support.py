@@ -6,21 +6,26 @@ SIMULATOR_COMMANDS = {
     "questa": ("vlib", "vlog", "vsim"),
 }
 
-SUPPORTED_SIM_VALUES = ("icarus", "verilator", "questa", "vsim")
+SIM_ALIASES = {
+    "iverilog": "icarus",
+    "vsim": "questa",
+}
+
+SUPPORTED_SIM_VALUES = ("icarus", "verilator", "questa", "iverilog", "vsim")
 
 
 def _supported_values_message():
-    return (
-        ", ".join(f"SIM={value}" for value in SUPPORTED_SIM_VALUES[:-1])
-        + f", or SIM={SUPPORTED_SIM_VALUES[-1]} "
-        "(vsim is an alias for questa)"
+    values = ", ".join(f"SIM={value}" for value in SUPPORTED_SIM_VALUES[:-1])
+    aliases = "; ".join(
+        f"{alias} is an alias for {target}" for alias, target in SIM_ALIASES.items()
     )
+    return f"{values}, or SIM={SUPPORTED_SIM_VALUES[-1]} ({aliases})"
 
 
 def normalize_simulator(sim):
     """Return the cocotb/pytest simulator name for a ``SIM`` value."""
     sim = sim.strip().lower()
-    return "questa" if sim == "vsim" else sim
+    return SIM_ALIASES.get(sim, sim)
 
 
 def selected_simulator(environ):
@@ -44,7 +49,8 @@ def simulator_commands(sim):
         return SIMULATOR_COMMANDS[sim]
     except KeyError as error:
         choices = "', '".join(SIMULATOR_COMMANDS)
-        raise ValueError(f"unsupported SIM={sim!r}; expected '{choices}' (or 'vsim')") from error
+        aliases = ", ".join(f"'{alias}' for {target}" for alias, target in SIM_ALIASES.items())
+        raise ValueError(f"unsupported SIM={sim!r}; expected '{choices}' (or {aliases})") from error
 
 
 def missing_simulator_commands(sim, which):
