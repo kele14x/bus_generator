@@ -131,37 +131,39 @@ module {{ top_name }}_regs (
     reg                   int_rd_err_next;
     reg  [DATA_WIDTH-1:0] int_rd_data;
 
-    integer b_idx;
+    integer               b_idx;
 
-    assign aclk    = s_axi_aclk;
-    assign aresetn = s_axi_aresetn;
+    //
 
-    assign b_hsk          = s_axi_bvalid && s_axi_bready;
-    assign r_hsk          = s_axi_rvalid && s_axi_rready;
-    assign wr_ack_fire    = int_wr_ack && (b_wait_ack != 2'd0);
-    assign rd_ack_fire    = int_rd_ack && (r_wait_ack != 2'd0);
-    assign b_credit       = (b_outstanding != 2'd2) || b_hsk;
-    assign r_credit       = (r_outstanding != 2'd2) || r_hsk;
-    assign issue          = head_valid && (head_write ? b_credit : (r_credit && !rd_mem_pending));
-    assign issue_write    = issue && head_write;
-    assign issue_read     = issue && !head_write;
-    assign head_available = !head_valid || issue;
-    assign read_waiting   = ar_back_valid || s_axi_arvalid;
-    assign write_waiting  = aw_back_valid && w_back_valid;
-    assign grant_read     = head_available && (r_credit && !rd_mem_pending) && read_waiting && (!write_waiting || priority_read);
-    assign grant_write    = head_available && b_credit && write_waiting && (!read_waiting || !priority_read);
-    assign load_read_back = grant_read && ar_back_valid;
+    assign aclk             = s_axi_aclk;
+    assign aresetn          = s_axi_aresetn;
+
+    assign b_hsk            = s_axi_bvalid && s_axi_bready;
+    assign r_hsk            = s_axi_rvalid && s_axi_rready;
+    assign wr_ack_fire      = int_wr_ack && (b_wait_ack != 2'd0);
+    assign rd_ack_fire      = int_rd_ack && (r_wait_ack != 2'd0);
+    assign b_credit         = (b_outstanding != 2'd2) || b_hsk;
+    assign r_credit         = (r_outstanding != 2'd2) || r_hsk;
+    assign issue            = head_valid && (head_write ? b_credit : (r_credit && !rd_mem_pending));
+    assign issue_write      = issue && head_write;
+    assign issue_read       = issue && !head_write;
+    assign head_available   = !head_valid || issue;
+    assign read_waiting     = ar_back_valid || s_axi_arvalid;
+    assign write_waiting    = aw_back_valid && w_back_valid;
+    assign grant_read       = head_available && (r_credit && !rd_mem_pending) && read_waiting && (!write_waiting || priority_read);
+    assign grant_write      = head_available && b_credit && write_waiting && (!read_waiting || !priority_read);
+    assign load_read_back   = grant_read && ar_back_valid;
     assign load_read_direct = grant_read && !ar_back_valid && s_axi_arvalid;
-    assign load_write_back = grant_write;
-    assign ar_hsk         = s_axi_arvalid && s_axi_arready;
-    assign aw_hsk         = s_axi_awvalid && s_axi_awready;
-    assign w_hsk          = s_axi_wvalid && s_axi_wready;
+    assign load_write_back  = grant_write;
+    assign ar_hsk           = s_axi_arvalid && s_axi_arready;
+    assign aw_hsk           = s_axi_awvalid && s_axi_awready;
+    assign w_hsk            = s_axi_wvalid && s_axi_wready;
 
-    assign int_addr       = head_addr;
-    assign int_wr_data    = head_wdata;
-    assign int_wr_strb    = head_wstrb;
-    assign int_wr_en      = issue_write;
-    assign int_rd_en      = issue_read;
+    assign int_addr         = head_addr;
+    assign int_wr_data      = head_wdata;
+    assign int_wr_strb      = head_wstrb;
+    assign int_wr_en        = issue_write;
+    assign int_rd_en        = issue_read;
 
     genvar sw_byte_idx;
     generate
@@ -460,11 +462,9 @@ module {{ top_name }}_regs (
         {%- if field.is_sw_writable %}
         end else if (int_wr_en && {{ field.name }}_strb) begin
             {%- if field.is_hw_writable %}
-            {{ field.name }}_value <= ({{ field.name }}_in & ~{{ field.name }}_sw_mask) |
-                                       (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
+            {{ field.name }}_value <= ({{ field.name }}_in & ~{{ field.name }}_sw_mask) | (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
             {%- else %}
-            {{ field.name }}_value <= ({{ field.name }}_value & ~{{ field.name }}_sw_mask) |
-                                       (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
+            {{ field.name }}_value <= ({{ field.name }}_value & ~{{ field.name }}_sw_mask) | (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
             {%- endif %}
         {%- endif %}
         {%- if field.is_hw_writable %}

@@ -22,3 +22,39 @@ A CLI that generates a Verilog AXI4-Lite CSR register block (and C header, testb
 ## Entry point
 
 `bus_generator.__init__:main(argv=None)` is the console-script entry (see `[project.scripts]`); it forwards to `cli(argv)`. Tests import `from bus_generator import main` and call `main([...])`.
+
+## Known Issues
+
+### [HIGH] SystemRDL side-effect properties are not supported
+
+The implementation handles basic reset, software writes, and hardware inputs,
+but does not implement SystemRDL side-effect properties such as `onread`,
+`onwrite`, write-one-to-clear, write-one-to-set, read-clear, or single-pulse
+behavior. The write-once semantics of `sw=rw1` and `sw=w1` are also not
+enforced for fields or memories.
+
+Currently it:
+
+- Generation continues with the existing behavior, but emits `WARNING` messages
+  for fields or memories using unsupported `onread`, `onwrite`, `sw=rw1`, or
+  `sw=w1` semantics.
+- Warning messages include the elaborated component path and the ignored
+  property.
+- The side-effect semantics themselves remain unsupported and are intentionally
+  deferred; generated RTL must not be treated as implementing them.
+
+## Verification Notes
+
+The simulator policy requires an explicit selection:
+
+```text
+SIM=icarus
+SIM=verilator
+SIM=questa
+SIM=vsim
+```
+
+Unset or unavailable simulator selections fail immediately instead of silently
+skipping simulator-marked tests. The external-memory overlapping-read timeout
+was resolved by the edge-synchronous cocotb BFM refactor, and the full suite
+passes under both `SIM=icarus` and `SIM=verilator`.
