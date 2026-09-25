@@ -4,7 +4,7 @@
 
 ## Dependency
 
-Python 3.13 and [uv](https://docs.astral.sh/uv/). Runtime and dev dependencies are declared in `pyproject.toml`.
+Python 3.14 and [uv](https://docs.astral.sh/uv/). Runtime and dev dependencies are declared in `pyproject.toml`.
 
 ## Installation
 
