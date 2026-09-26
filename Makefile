@@ -30,15 +30,15 @@ unit:
 # Render every sample x template into ./generated/<template>/ for reuse.
 artifacts: $(ARTIFACTS)
 
-$(GENERATED)/axi4l/%_regs.v: tests/%.rdl src/bus_generator/templates/{{axi4l}}_regs.v.jinja2
+$(GENERATED)/axi4l/%_regs.v: samples/%.rdl src/bus_generator/templates/{{axi4l}}_regs.v.jinja2
 	@mkdir -p $(@D)
 	uv run bus-generator $< -o $(@D) -t axi4l
 
-$(GENERATED)/c_header/%.h: tests/%.rdl src/bus_generator/templates/{{c_header}}.h.jinja2
+$(GENERATED)/c_header/%.h: samples/%.rdl src/bus_generator/templates/{{c_header}}.h.jinja2
 	@mkdir -p $(@D)
 	uv run bus-generator $< -o $(@D) -t c_header
 
-$(GENERATED)/tb_axi4l/tb_%_regs.v: tests/%.rdl src/bus_generator/templates/tb_{{axi4l}}_regs.v.jinja2
+$(GENERATED)/tb_axi4l/tb_%_regs.v: samples/%.rdl src/bus_generator/templates/tb_{{axi4l}}_regs.v.jinja2
 	@mkdir -p $(@D)
 	uv run bus-generator $< -o $(@D) -t tb_axi4l
 

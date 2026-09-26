@@ -33,6 +33,7 @@ from systemrdl import RDLCompiler, RDLWalker
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GENERATED = REPO_ROOT / "generated"
 TESTS_DIR = Path(__file__).resolve().parent
+SAMPLES_DIR = REPO_ROOT / "samples"
 
 DATA_WIDTH = 32
 STRB_WIDTH = DATA_WIDTH // 8
@@ -141,7 +142,7 @@ class RdlStressModel:
 
 
 class ExternalMemoryModel:
-    def __init__(self, dut, mem, values):
+    def __init__(self, dut, mem, values, *, invalid_data=None):
         self.clk = dut.s_axi_aclk
         self.resetn = dut.s_axi_aresetn
         self.addr = getattr(dut, f"{mem['name']}_addr")
@@ -153,6 +154,7 @@ class ExternalMemoryModel:
         self.valid = getattr(dut, f"{mem['name']}_valid")
         self.values = values
         self.mask = (1 << mem["width"]) - 1
+        self.invalid_data = invalid_data
         seed = SEED ^ sum(ord(c) for c in mem["name"])
         self.random = random.Random(seed)
 
@@ -167,13 +169,13 @@ class ExternalMemoryModel:
         self.dout.value = 0
         self.valid.value = 0
         while True:
+            await RisingEdge(self.clk)
             resetn = sampled_int(self.resetn)
             en = sampled_int(self.en)
             we = sampled_int(self.we)
             addr = sampled_int(self.addr)
             din = sampled_int(self.din)
             be = sampled_int(self.be)
-            await RisingEdge(self.clk)
             if resetn == 0:
                 pending = []
                 self.dout.value = 0
@@ -193,6 +195,8 @@ class ExternalMemoryModel:
             if ready_idx is not None:
                 self.dout.value = self.values[ready_idx] & self.mask
                 self.valid.value = 1
+            elif self.invalid_data is not None:
+                self.dout.value = self.invalid_data & self.mask
 
             if en == 1:
                 if we == 1:
@@ -460,7 +464,7 @@ class PipelinedReadMaster:
 
 def _load_rdl_metadata(top):
     rdlc = RDLCompiler()
-    rdlc.compile_file(str(TESTS_DIR / f"{top}.rdl"))
+    rdlc.compile_file(str(SAMPLES_DIR / f"{top}.rdl"))
     root = rdlc.elaborate()
     walker = RDLWalker(unroll=True)
 
@@ -519,6 +523,54 @@ async def _check_readback(dut, master, model):
                 f"expected=0x{expected:08x} mask=0x{mask:08x} resp={rresp}"
             )
     return errors
+
+
+async def _check_memory_read_timing(dut, *, invalid_data):
+    random.seed(SEED_R)
+    fields, mems = _load_rdl_metadata(_stress_top(dut))
+    dut.s_axi_aresetn.value = 0
+    master = AxiLiteMaster(dut)
+    for field in fields:
+        if field["is_hw_writable"]:
+            getattr(dut, f"{field['name']}_in").value = 0
+
+    expected_reads = []
+    for mem_index, mem in enumerate(mems):
+        mask = (1 << mem["width"]) - 1
+        values = [
+            (0x12345678 + mem_index * 0x10000 + index) & mask
+            for index in range(mem["mementries"])
+        ]
+        memory = ExternalMemoryModel(dut, mem, values, invalid_data=invalid_data)
+        cocotb.start_soon(memory.run())
+        if mem["is_sw_readable"]:
+            for index in (0, mem["mementries"] - 1):
+                expected_reads.append((mem["address"] + index * 4, values[index]))
+
+    assert expected_reads
+    cocotb.start_soon(Clock(dut.s_axi_aclk, 10, unit="ns").start())
+    for _ in range(10):
+        await RisingEdge(dut.s_axi_aclk)
+    dut.s_axi_aresetn.value = 1
+    await RisingEdge(dut.s_axi_aclk)
+
+    for address, expected in expected_reads:
+        data, response = await master.read(address)
+        assert response == 0, f"addr=0x{address:x}: unexpected RRESP={response}"
+        assert data == expected, (
+            f"addr=0x{address:x}: expected=0x{expected:08x}, actual=0x{data:08x}, "
+            f"invalid_data={invalid_data!r}"
+        )
+
+
+@cocotb.test(timeout_time=10, timeout_unit="us")
+async def memory_read_held_data(dut):
+    await _check_memory_read_timing(dut, invalid_data=None)
+
+
+@cocotb.test(timeout_time=10, timeout_unit="us")
+async def memory_read_valid_pulse(dut):
+    await _check_memory_read_timing(dut, invalid_data=0xDEADBEEF)
 
 
 @cocotb.test(timeout_time=1, timeout_unit="ms")
@@ -754,6 +806,12 @@ def _run_cocotb_test(top, testcase):
             os.environ.pop("STRESS_TOP", None)
         else:
             os.environ["STRESS_TOP"] = old_top
+
+
+@pytest.mark.sim
+@pytest.mark.parametrize("testcase", ["memory_read_held_data", "memory_read_valid_pulse"])
+def test_memory_read_timing(testcase):
+    _run_cocotb_test("ram", testcase)
 
 
 @pytest.mark.sim

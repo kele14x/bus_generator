@@ -21,12 +21,12 @@ from bus_generator.bus_generator import (
 )
 from systemrdl import RDLCompiler, RDLWalker
 
-GPIO_RDL = "tests/gpio.rdl"
-FIELD_ACCESS_RDL = "tests/field_access.rdl"
-MEM_ACCESS_RDL = "tests/mem_access.rdl"
-RAM_RDL = "tests/ram.rdl"
-SIMPLE_RDL = "tests/simple.rdl"
-SIDE_EFFECTS_RDL = "tests/side_effects.rdl"
+GPIO_RDL = "samples/gpio.rdl"
+FIELD_ACCESS_RDL = "samples/field_access.rdl"
+MEM_ACCESS_RDL = "samples/mem_access.rdl"
+RAM_RDL = "samples/ram.rdl"
+SIMPLE_RDL = "samples/simple.rdl"
+SIDE_EFFECTS_RDL = "samples/side_effects.rdl"
 
 
 def _compile(rdl_path):

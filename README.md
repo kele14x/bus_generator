@@ -24,10 +24,10 @@ uv run bus-generator <input_files> -o <output_dir>
 
 By default the AXI4-Lite register block template (`axi4l`) is rendered. Select
 one or more templates by alias with `-t`. Available aliases: `axi4l`,
-`c_header`, `tb_axi4l`. For example:
+`c_header`, `tb_axi4l`. Sample RDL files are in `samples/`. For example:
 
 ```bash
-uv run bus-generator gpio.rdl -o out -t axi4l c_header
+uv run bus-generator samples/gpio.rdl -o out -t axi4l c_header
 ```
 
 ## Testing
