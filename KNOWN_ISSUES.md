@@ -23,6 +23,16 @@ Source references reflect the reorganized template; line numbers may change.
 - **Suggested resolution:** Capture memory data alongside its acknowledgement.
   Holding `dout` through the following sampling edge avoids this specific failure,
   but that extra hold requirement is not expressed by the interface.
+- **Rechecked 2026-09-28:** Confirmed with Questa against both the existing
+  generated RAM RTL and freshly generated output. `memory_read_held_data` passes;
+  `memory_read_valid_pulse` fails with `0xdeadbeef` instead of `0x12345678`.
+  The simple `tests/test_ram_regs.py` previously accessed only register `0x0`,
+  so its passing result did not exercise RAM. It now writes and reads RAM0 at
+  `0x100` and reproduces the same failure. In that test's waveform, the memory
+  presents valid data after 360 ns; at 370 ns the RTL registers the acknowledgement
+  while the model deasserts valid and changes data; at 380 ns the response FIFO
+  captures the changed data. Run with `SIM=questa`:
+  `uv run pytest tests/test_ram_regs.py tests/test_stress.py::test_memory_read_timing -v`.
 
 ### KI-02 [P1] An ineligible preferred request blocks the opposite channel
 

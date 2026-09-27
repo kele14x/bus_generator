@@ -20,6 +20,7 @@ tests/__pycache__/
 # Cocotb
 sim_build/
 *.result.xml
+transcript
 
 # Reusable generated output (from `make artifacts`)
 generated/
