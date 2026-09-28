@@ -179,6 +179,20 @@ def warn_unsupported_side_effects(top: AddrmapNode):
     RDLWalker(unroll=True).walk(top, UnsupportedSideEffectWarningListener())
 
 
+def warn_memory_alignment(top: AddrmapNode):
+    for node in top.descendants(unroll=True):
+        if not isinstance(node, MemNode):
+            continue
+        alignment = 1 << (node.size - 1).bit_length()
+        if node.absolute_address % alignment:
+            logging.warning(
+                "Memory '%s' at 0x%x is not aligned to its %d-byte address window; "
+                "consider aligning its base to a multiple of 0x%x so synthesis can "
+                "eliminate address subtraction.",
+                node.get_path(), node.absolute_address, alignment, alignment,
+            )
+
+
 class UnsupportedDataWidthError(ValueError):
     """Raised when an RDL component cannot fit the fixed AXI data bus."""
 
@@ -466,6 +480,7 @@ def cli(argv=None):
         sys.exit(1)
 
     warn_unsupported_side_effects(top)
+    warn_memory_alignment(top)
 
     # Print
     if args.print:

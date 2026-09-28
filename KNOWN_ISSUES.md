@@ -11,29 +11,6 @@ Source references reflect the reorganized template; line numbers may change.
 
 ## RTL and generator
 
-### KI-01 [P1] External-memory read data is captured one cycle late
-
-- **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:373-374`,
-  `:274-280`, and `:539-546`.
-- **Trigger:** Memory asserts `valid` for one cycle and changes `dout` after
-  deasserting `valid`.
-- **Impact:** The acknowledgement is registered, but the response FIFO samples
-  live memory data on the following clock. An isolated Icarus reproduction
-  returned `0xdeadbeef` with OKAY instead of the valid `0x12345678`.
-- **Suggested resolution:** Capture memory data alongside its acknowledgement.
-  Holding `dout` through the following sampling edge avoids this specific failure,
-  but that extra hold requirement is not expressed by the interface.
-- **Rechecked 2026-09-28:** Confirmed with Questa against both the existing
-  generated RAM RTL and freshly generated output. `memory_read_held_data` passes;
-  `memory_read_valid_pulse` fails with `0xdeadbeef` instead of `0x12345678`.
-  The simple `tests/test_ram_regs.py` previously accessed only register `0x0`,
-  so its passing result did not exercise RAM. It now writes and reads RAM0 at
-  `0x100` and reproduces the same failure. In that test's waveform, the memory
-  presents valid data after 360 ns; at 370 ns the RTL registers the acknowledgement
-  while the model deasserts valid and changes data; at 380 ns the response FIFO
-  captures the changed data. Run with `SIM=questa`:
-  `uv run pytest tests/test_ram_regs.py tests/test_stress.py::test_memory_read_timing -v`.
-
 ### KI-02 [P1] An ineligible preferred request blocks the opposite channel
 
 - **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:129-132`.
@@ -45,18 +22,6 @@ Source references reflect the reorganized template; line numbers may change.
   response before asserting `RREADY` can deadlock.
 - **Suggested resolution:** Arbitrate among eligible requests; an ineligible
   preferred request must not veto an eligible competitor.
-
-### KI-03 [P1] External-memory addresses do not subtract the memory base
-
-- **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:463`.
-- **Trigger:** A memory base is not aligned to the address window implied by the
-  generated slice. A valid three-entry, 32-bit memory at byte address `0x4` is
-  one example.
-- **Impact:** Slicing the absolute address produces indices `1,2,3` instead of
-  `0,1,2`, including an out-of-range index. A write/read round trip can conceal
-  this when both operations use the same incorrect mapping.
-- **Suggested resolution:** Derive the external entry index from the byte offset
-  relative to the memory base.
 
 ### KI-04 [P1] Narrow registers can alias and overwrite each other
 

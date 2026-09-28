@@ -18,6 +18,7 @@ from bus_generator.bus_generator import (
     convert,
     discover_templates,
     parse_arguments,
+    warn_memory_alignment,
     warn_unsupported_side_effects,
 )
 from systemrdl import RDLCompiler, RDLWalker
@@ -311,6 +312,99 @@ def test_cli_reports_side_effect_warnings_at_default_verbosity(
     assert ("Ignoring unsupported SystemRDL side-effect semantics" in result.stderr) is expect_warnings
 
 
+@pytest.fixture(
+    params=[
+        pytest.param((3, 0x0, False), id="3-entries-zero"),
+        pytest.param((3, 0x4, False), id="3-entries-misaligned"),
+        pytest.param((3, 0xC, False), id="3-entries-size-aligned-only"),
+        pytest.param((3, 0x10, False), id="3-entries-window-aligned"),
+        pytest.param((4, 0x0, False), id="4-entries-zero"),
+        pytest.param((4, 0x4, False), id="4-entries-misaligned"),
+        pytest.param((4, 0xC, False), id="4-entries-last-word-base"),
+        pytest.param((4, 0x10, False), id="4-entries-window-aligned"),
+        pytest.param((4, 0x4, True), id="nested-absolute-misalignment"),
+    ]
+)
+def memory_alignment_rdl(tmp_path, request):
+    entries, base, nested = request.param
+    relative_base = 0 if nested else base
+    memory = f"""
+        external mem {{
+            memwidth = 32;
+            mementries = {entries};
+            sw = rw;
+        }} ram0 @ 0x{relative_base:x};
+    """
+    if nested:
+        memory = f"addrmap {{ {memory} }} block @ 0x{base:x};"
+    rdl_path = tmp_path / "alignment_test.rdl"
+    rdl_path.write_text(f"addrmap alignment_test {{ {memory} }};")
+    memory_path = "block.ram0" if nested else "ram0"
+    return rdl_path, base, memory_path
+
+
+def test_memory_alignment_warnings(memory_alignment_rdl, caplog):
+    rdl_path, base, memory_path = memory_alignment_rdl
+    top = _compile(str(rdl_path))
+
+    with caplog.at_level("WARNING"):
+        warn_memory_alignment(top)
+
+    expected = []
+    if base % 16:
+        expected = [
+            f"Memory 'alignment_test.{memory_path}' at 0x{base:x} is not aligned "
+            "to its 16-byte address window; consider aligning its base to a "
+            "multiple of 0x10 so synthesis can eliminate address subtraction."
+        ]
+    assert [(record.levelname, record.getMessage()) for record in caplog.records] == [
+        ("WARNING", message) for message in expected
+    ]
+
+
+@pytest.mark.parametrize(
+    ("quiet", "warning_count"),
+    [
+        pytest.param(False, 1, id="default-verbosity"),
+        pytest.param(True, 0, id="quiet"),
+    ],
+)
+def test_cli_reports_memory_alignment_warning_once(tmp_path, quiet, warning_count):
+    rdl_path = tmp_path / "alignment_test.rdl"
+    rdl_path.write_text("""
+        addrmap alignment_test {
+            external mem { memwidth = 32; mementries = 3; sw = rw; } ram0 @ 0xc;
+        };
+    """)
+    command = [
+        sys.executable,
+        "-m",
+        "bus_generator.bus_generator",
+        str(rdl_path),
+        "-o",
+        str(tmp_path),
+        "-t",
+        "axi4l",
+        "c_header",
+        "tb_axi4l",
+    ]
+    if quiet:
+        command.append("-q")
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    for filename in ("alignment_test_regs.v", "alignment_test.h", "tb_alignment_test_regs.v"):
+        assert (tmp_path / filename).is_file()
+    warning = (
+        "Memory 'alignment_test.ram0' at 0xc is not aligned to its 16-byte address "
+        "window; consider aligning its base to a multiple of 0x10 so synthesis "
+        "can eliminate address subtraction."
+    )
+    assert result.stderr.count(warning) == warning_count
+    assert result.stderr.count("not aligned to its") == warning_count
+
+
 # ---------------------------------------------------------------------------
 # Listeners on ram.rdl
 # ---------------------------------------------------------------------------
@@ -446,6 +540,22 @@ def _assigned_expression(content, signal):
     assignments = re.findall(rf"assign{re.escape(signal)}=([^;]+);", content)
     assert len(assignments) == 1, f"Expected one continuous driver for {signal}"
     return assignments[0]
+
+
+def test_convert_renders_memory_base_relative_address(memory_alignment_rdl):
+    rdl_path, base, memory_path = memory_alignment_rdl
+    top = _compile(str(rdl_path))
+    content = _compact_verilog(convert(top, "{{axi4l}}_regs.v.jinja2"))
+    name = memory_path.replace(".", "_")
+    addr_width = (top.total_size - 1).bit_length()
+
+    assert f"localparamintegerADDR_WIDTH={addr_width};" in content
+    assert f"wire[ADDR_WIDTH-1:0]{name}_byte_offset;" in content
+    assert _assigned_expression(content, f"{name}_byte_offset") == (
+        f"int_addr-{addr_width}'h{base:x}"
+    )
+    assert _assigned_expression(content, f"{name}_addr") == f"{name}_byte_offset[3:2]"
+    assert f"outputwire[1:0]{name}_addr," in content
 
 
 @pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])

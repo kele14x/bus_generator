@@ -30,6 +30,28 @@ one or more templates by alias with `-t`. Available aliases: `axi4l`,
 uv run bus-generator samples/gpio.rdl -o out -t axi4l c_header
 ```
 
+## External RAM interface contract
+
+Each generated RAM interface uses the following contract on `s_axi_aclk`:
+
+1. Each asserted `ram_en` at a rising clock edge represents an accepted request.
+2. Every request, including writes, produces exactly one response.
+3. Responses arrive in request order, at most one per clock.
+4. `ram_valid` qualifies `ram_dout`; data need not remain valid afterward.
+5. Consecutive cycles with `ram_valid=1` represent consecutive responses.
+6. Zero latency is supported, including combinational `ram_valid = ram_en`.
+7. Reset flushes pending responses in both the adapter and external RAM; the
+   external RAM must not return pre-reset responses after reset.
+
+Here `ram_` stands for the generated memory instance's signal prefix. Physical
+RAM writes are acknowledged on AXI only after their RAM response, not at issue.
+
+RAM entry indices are derived from byte addresses relative to each memory's base.
+For minimal address logic, align the base to the next power of two of the memory
+size in bytes: three or four 32-bit entries both use a 16-byte alignment window.
+This allows synthesis to eliminate address subtraction. Other base alignments
+remain supported, with an advisory warning that can be suppressed with `-q`.
+
 ## Testing
 
 ```bash
