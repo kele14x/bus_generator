@@ -234,11 +234,17 @@ class DataWidthValidationListener(RDLListener):
 
     def enter_Mem(self, node: MemNode):
         width = node.get_property("memwidth")
-        if width > DATA_WIDTH:
+        if width != DATA_WIDTH:
             self.errors.append(
-                "Memory '%s' has memwidth %d, which exceeds the fixed %d-bit "
-                "DATA_WIDTH."
+                "Memory '%s' has memwidth %d; only %d-bit memories are supported."
                 % (node.get_path(), width, DATA_WIDTH)
+            )
+        alignment = 1 << ADDR_WIDTH_LSB
+        if node.absolute_address % alignment:
+            self.errors.append(
+                "Memory '%s' at 0x%x is not aligned to a %d-bit AXI word; "
+                "memory base addresses must be multiples of %d bytes."
+                % (node.get_path(), node.absolute_address, DATA_WIDTH, alignment)
             )
 
 

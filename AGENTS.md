@@ -45,7 +45,7 @@ Currently it:
 
 ## TODO
 
-- Support registers spanning multiple aligned 32-bit AXI words, including narrow
+- [P2] Support registers spanning multiple aligned 32-bit AXI words, including narrow
   registers that straddle a word boundary (e.g. 16 bits at `0x3`) and registers
   wider than 32 bits (e.g. `regwidth=64; accesswidth=32`). Preserve logical fields
   and hardware ports while adding per-word read slices, byte-lane write masks,
@@ -54,6 +54,11 @@ Currently it:
   This is a generator limitation, not invalid SystemRDL. Packed narrow registers
   contained within one word use byte-lane mapping; C field addresses, masks, and
   offsets describe aligned 32-bit MMIO words.
+- [P2] Consider supporting 16-bit and 8-bit memory entries, and entry widths
+  that are multiples of 32 bits. Require memory bases to be 16-bit (2-byte),
+  8-bit (1-byte), and 32-bit (4-byte) aligned, respectively. Until implemented,
+  the CLI and `convert()` reject memories unless `memwidth=32` and the absolute
+  base address is a multiple of 4 bytes.
 
 ## Verification Notes
 

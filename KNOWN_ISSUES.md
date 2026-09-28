@@ -11,20 +11,6 @@ Source references reflect the reorganized template; line numbers may change.
 
 ## RTL and generator
 
-### KI-05 [P1] Narrow memories lose addressability and have incorrect C sizes
-
-- **Location:** `src/bus_generator/bus_generator.py:275-277`,
-  `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:463`, and
-  `src/bus_generator/templates/{{c_header}}.h.jinja2:17`.
-- **Trigger:** A memory has entries narrower than 32 bits, such as eight 16-bit
-  entries occupying 16 bytes.
-- **Impact:** The generator always discards two byte-address bits. That example
-  exposes only four entry indices instead of eight, and the C header reports
-  32 bytes instead of 16. Data and byte-enable mapping also assumes bus-sized
-  entries.
-- **Suggested resolution:** Handle memory entry geometry consistently across RTL,
-  headers, and tests, or reject unsupported widths explicitly.
-
 ### KI-06 [P1] SystemRDL side-effect semantics are unsupported
 
 - **Location:** `src/bus_generator/bus_generator.py:140-179` and `AGENTS.md:28-44`.

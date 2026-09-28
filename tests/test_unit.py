@@ -262,6 +262,82 @@ def test_cli_rejects_cross_word_registers_before_output(
     assert not output_dir.exists()
 
 
+@pytest.fixture(params=[
+    pytest.param((8, 0x100, "direct"), id="8-bit"),
+    pytest.param((16, 0x100, "direct"), id="16-bit"),
+    pytest.param((24, 0x100, "direct"), id="24-bit"),
+    pytest.param((64, 0x100, "direct"), id="64-bit"),
+    pytest.param((32, 0x1, "direct"), id="unaligned-byte-1"),
+    pytest.param((32, 0x2, "direct"), id="unaligned-byte-2"),
+    pytest.param((32, 0x3, "direct"), id="unaligned-byte-3"),
+    pytest.param((16, 0x1, "direct"), id="narrow-and-unaligned"),
+    pytest.param((32, 0x1, "nested"), id="nested-absolute-address"),
+    pytest.param((32, 0x21, "array"), id="unaligned-array-element"),
+])
+def unsupported_memory_rdl(tmp_path, request):
+    width, address, layout = request.param
+    memory = f"external mem {{ memwidth = {width}; mementries = 8; sw = rw; }}"
+    if layout == "nested":
+        body = f"addrmap {{ {memory} ram @ 0x0; }} block @ 0x{address:x};"
+        path = "unsupported_memory.block.ram"
+    elif layout == "array":
+        body = f"{memory} ram[2] @ 0x0 += 0x{address:x};"
+        path = "unsupported_memory.ram[1]"
+    else:
+        body = f"{memory} ram @ 0x{address:x};"
+        path = "unsupported_memory.ram"
+    rdl_path = tmp_path / "unsupported_memory.rdl"
+    rdl_path.write_text(f"addrmap unsupported_memory {{ {body} }};")
+    messages = []
+    if width != 32:
+        messages.append(
+            f"Memory '{path}' has memwidth {width}; only 32-bit memories are supported."
+        )
+    if address % 4:
+        messages.append(
+            f"Memory '{path}' at 0x{address:x} is not aligned to a 32-bit AXI word; "
+            "memory base addresses must be multiples of 4 bytes."
+        )
+    return rdl_path, messages
+
+
+@pytest.mark.parametrize("template", [
+    "{{axi4l}}_regs.v.jinja2", "{{c_header}}.h.jinja2", "tb_{{axi4l}}_regs.v.jinja2",
+])
+def test_convert_rejects_unsupported_memories(unsupported_memory_rdl, template):
+    rdl_path, messages = unsupported_memory_rdl
+    top = _compile(str(rdl_path))
+
+    with pytest.raises(bus_generator_module.UnsupportedDataWidthError) as error:
+        convert(top, template)
+
+    assert str(error.value).splitlines() == messages
+
+
+@pytest.mark.parametrize("quiet", [False, True], ids=["default", "quiet"])
+def test_cli_rejects_unsupported_memories_before_output(
+    unsupported_memory_rdl, tmp_path, quiet,
+):
+    rdl_path, messages = unsupported_memory_rdl
+    output_dir = tmp_path / "generated"
+    command = [
+        sys.executable, "-m", "bus_generator.bus_generator", str(rdl_path),
+        "-o", str(output_dir), "-t", "axi4l", "c_header", "tb_axi4l",
+    ]
+    if quiet:
+        command.append("-q")
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "ERROR:" in result.stderr
+    for message in messages:
+        assert message in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+    assert not output_dir.exists()
+
+
 @pytest.mark.parametrize(("width", "address"), [
     (8, 0x0), (8, 0x1), (8, 0x2), (8, 0x3),
     (16, 0x0), (16, 0x1), (16, 0x2), (16, 0x6),
@@ -568,6 +644,15 @@ def memory_alignment_rdl(tmp_path, request):
     rdl_path.write_text(f"addrmap alignment_test {{ {memory} }};")
     memory_path = "block.ram0" if nested else "ram0"
     return rdl_path, base, memory_path
+
+
+@pytest.mark.parametrize("template", [
+    "{{axi4l}}_regs.v.jinja2", "{{c_header}}.h.jinja2", "tb_{{axi4l}}_regs.v.jinja2",
+])
+def test_convert_accepts_word_aligned_memories(memory_alignment_rdl, template):
+    rdl_path, _, _ = memory_alignment_rdl
+
+    assert convert(_compile(str(rdl_path)), template)
 
 
 def test_memory_alignment_warnings(memory_alignment_rdl, caplog):
