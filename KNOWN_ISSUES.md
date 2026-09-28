@@ -11,31 +11,6 @@ Source references reflect the reorganized template; line numbers may change.
 
 ## RTL and generator
 
-### KI-02 [P1] An ineligible preferred request blocks the opposite channel
-
-- **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:129-132`.
-- **Trigger:** Fill both read-response slots with `RREADY=0`, buffer another read,
-  complete one write, then submit another write.
-- **Impact:** Read priority prevents the write from advancing even with an empty
-  head and available write credit. Simulation confirmed that the write resumes
-  only after read backpressure is released. A master waiting for the write
-  response before asserting `RREADY` can deadlock.
-- **Suggested resolution:** Arbitrate among eligible requests; an ineligible
-  preferred request must not veto an eligible competitor.
-
-### KI-04 [P1] Narrow registers can alias and overwrite each other
-
-- **Location:** `src/bus_generator/bus_generator.py:236` and
-  `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:317`.
-- **Trigger:** Two 16-bit registers occupy byte offsets `0` and `2` in a map
-  large enough to use the word-address decoder, for example with a third
-  register at offset `4`.
-- **Impact:** Both registers receive the same word address and field bit
-  positions. An AXI write of `0x1234` to offset `0` with `WSTRB=0011` updated
-  both registers in simulation.
-- **Suggested resolution:** Implement subword address/byte-lane mapping or reject
-  layouts that the fixed 32-bit implementation cannot represent.
-
 ### KI-05 [P1] Narrow memories lose addressability and have incorrect C sizes
 
 - **Location:** `src/bus_generator/bus_generator.py:275-277`,

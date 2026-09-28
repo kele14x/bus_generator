@@ -191,6 +191,233 @@ def test_cli_generates_with_nested_output(tmp_path):
     assert result.stdout == ""
 
 
+@pytest.fixture(params=[
+    pytest.param((16, 15, 0x3, "direct"), id="straddling-16-bit"),
+    pytest.param((16, 7, 0x3, "direct"), id="straddling-low-field-only"),
+    pytest.param((32, 31, 0x1, "direct"), id="unaligned-32-bit"),
+    pytest.param((64, 63, 0x8, "direct"), id="64-bit-field"),
+    pytest.param((64, 7, 0x8, "direct"), id="64-bit-low-field-only"),
+    pytest.param((16, 15, 0x3, "nested"), id="nested-absolute-address"),
+    pytest.param((16, 15, 0x3, "array"), id="straddling-array-element"),
+])
+def cross_word_register_rdl(tmp_path, request):
+    width, high, address, layout = request.param
+    register = f"""reg {{
+        regwidth = {width};
+        accesswidth = {min(width, 32)};
+        field {{ sw = rw; hw = r; }} value[{high}:0];
+    }}"""
+    if layout == "nested":
+        body = f"regfile {{ {register} target @ 0x0; }} block @ 0x{address:x};"
+        path = "cross_word.block.target"
+    elif layout == "array":
+        body = f"{register} target[2] @ 0x0 += 0x{address:x};"
+        path = "cross_word.target[1]"
+    else:
+        body = f"{register} target @ 0x{address:x};"
+        path = "cross_word.target"
+    rdl_path = tmp_path / "cross_word.rdl"
+    rdl_path.write_text(f"addrmap cross_word {{ {body} }};")
+    message = (
+        f"Register '{path}' at 0x{address:x} with regwidth {width} occupies bytes "
+        f"0x{address:x}-0x{address + width // 8 - 1:x} across a 32-bit AXI word "
+        "boundary; multiword registers are not supported."
+    )
+    return rdl_path, message
+
+
+@pytest.mark.parametrize("template", [
+    "{{axi4l}}_regs.v.jinja2", "{{c_header}}.h.jinja2", "tb_{{axi4l}}_regs.v.jinja2",
+])
+def test_convert_rejects_cross_word_registers(cross_word_register_rdl, template):
+    rdl_path, message = cross_word_register_rdl
+    top = _compile(str(rdl_path))
+
+    with pytest.raises(bus_generator_module.UnsupportedDataWidthError) as error:
+        convert(top, template)
+
+    assert message in str(error.value)
+
+
+@pytest.mark.parametrize("quiet", [False, True], ids=["default", "quiet"])
+def test_cli_rejects_cross_word_registers_before_output(
+    cross_word_register_rdl, tmp_path, quiet,
+):
+    rdl_path, message = cross_word_register_rdl
+    output_dir = tmp_path / "generated"
+    command = [
+        sys.executable, "-m", "bus_generator.bus_generator", str(rdl_path),
+        "-o", str(output_dir), "-t", "axi4l", "c_header", "tb_axi4l",
+    ]
+    if quiet:
+        command.append("-q")
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "ERROR:" in result.stderr
+    assert message in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+    assert not output_dir.exists()
+
+
+@pytest.mark.parametrize(("width", "address"), [
+    (8, 0x0), (8, 0x1), (8, 0x2), (8, 0x3),
+    (16, 0x0), (16, 0x1), (16, 0x2), (16, 0x6),
+    (32, 0x0), (32, 0x4),
+])
+def test_registers_contained_in_one_word_pass_validation(tmp_path, width, address):
+    rdl_path = tmp_path / "contained.rdl"
+    rdl_path.write_text(f"""addrmap contained {{
+        reg {{
+            regwidth = {width};
+            field {{ sw = rw; hw = r; }} value[{width - 1}:0];
+        }} target @ 0x{address:x};
+    }};""")
+
+    bus_generator_module.validate_supported_data_widths(_compile(str(rdl_path)))
+
+
+def test_packed_narrow_registers_pass_boundary_validation(tmp_path):
+    rdl_path = tmp_path / "packed.rdl"
+    rdl_path.write_text("""addrmap packed {
+        reg {
+            regwidth = 16;
+            field { sw = rw; hw = r; } value[15:0];
+        } target[2] @ 0x0 += 0x2;
+        reg { field { sw = rw; hw = r; } value[31:0]; } next_word @ 0x4;
+    };""")
+
+    bus_generator_module.validate_supported_data_widths(_compile(str(rdl_path)))
+
+
+@pytest.fixture(params=[
+    pytest.param((8, 0x3, 5, 2, 29, 26, 0x3C000000,
+                  [(8, 0x3C000000)]), id="byte-three-subfield"),
+    pytest.param((16, 0x0, 15, 0, 15, 0, 0x0000FFFF,
+                  [(1, 0xFF), (2, 0xFF00)]), id="low-half"),
+    pytest.param((16, 0x2, 15, 0, 31, 16, 0xFFFF0000,
+                  [(4, 0xFF0000), (8, 0xFF000000)]), id="high-half"),
+    pytest.param((16, 0x1, 11, 4, 19, 12, 0x000FF000,
+                  [(2, 0xF000), (4, 0xF0000)]), id="cross-byte-subfield"),
+    pytest.param((16, 0x6, 11, 4, 27, 20, 0x0FF00000,
+                  [(4, 0xF00000), (8, 0xF000000)]), id="next-word-subfield"),
+    pytest.param((32, 0x4, 23, 8, 23, 8, 0x00FFFF00,
+                  [(2, 0xFF00), (4, 0xFF0000)]), id="aligned-word"),
+])
+def field_bus_mapping(tmp_path, request):
+    width, address, high, low, bus_msb, bus_lsb, bus_mask, strobes = request.param
+    rdl_path = tmp_path / "field_bus_mapping.rdl"
+    rdl_path.write_text(f"""addrmap field_bus_mapping {{
+        reg {{
+            regwidth = {width};
+            field {{ sw = rw; hw = r; reset = 0xa; }} value[{high}:{low}];
+        }} target @ 0x{address:x};
+    }};""")
+    return _compile(str(rdl_path)), request.param
+
+
+def test_field_bus_mapping_preserves_logical_positions(field_bus_mapping):
+    top, (width, address, high, low, bus_msb, bus_lsb, bus_mask, strobes) = field_bus_mapping
+    field, = _gather(top, FieldsGatheringListener).fields
+
+    assert field["address"] == address
+    assert field["width"] == high - low + 1
+    assert (field["high"], field["low"], field["msb"], field["lsb"]) == (high, low, high, low)
+    assert field["mask"] == ((1 << (high - low + 1)) - 1) << low
+    assert field["reset"] == 0xA
+    assert field["bus_address"] == address // 4 * 4
+    assert field["aligned_address"] == address // 4
+    assert (field["bus_msb"], field["bus_lsb"], field["bus_low"]) == (bus_msb, bus_lsb, bus_lsb)
+    assert field["bus_mask"] == bus_mask
+    assert field["wstrb_cases"] == [{"be": be, "mask": mask} for be, mask in strobes]
+
+
+def test_convert_renders_bus_lane_slices(field_bus_mapping):
+    top, (width, address, high, low, bus_msb, bus_lsb, bus_mask, strobes) = field_bus_mapping
+    content = _compact_verilog(convert(top, "{{axi4l}}_regs.v.jinja2"))
+    bus_slice = f"[{bus_msb}:{bus_lsb}]"
+
+    assert f"outputwire[{high - low}:0]target_value_out" in content
+    assert _assigned_expression(content, "target_value_sw_mask") == f"sw_byte_mask{bus_slice}"
+    assert f"int_wr_data{bus_slice}&target_value_sw_mask" in content
+    assert (
+        f"local_rd_data_next{bus_slice}=local_rd_data_next{bus_slice}|target_value_value;"
+    ) in content
+    assert "localparamintegerADDR_WIDTH=3;" in content
+    assert _assigned_expression(content, "target_value_sel") == (
+        f"(int_addr[2:2]=='h{address // 4:x})"
+    )
+
+
+def test_c_header_uses_aligned_word_coordinates(field_bus_mapping):
+    top, (width, address, high, low, bus_msb, bus_lsb, bus_mask, strobes) = field_bus_mapping
+    content = convert(top, "{{c_header}}.h.jinja2")
+    macros = dict(re.findall(r"#define (\w+) (0x[0-9a-f]+)", content))
+
+    assert {key: int(value, 16) for key, value in macros.items()} == {
+        "TARGET_VALUE_ADDR": address // 4 * 4,
+        "TARGET_VALUE_MASK": bus_mask,
+        "TARGET_VALUE_OFFSET": bus_lsb,
+        "TARGET_VALUE_WIDTH": high - low + 1,
+        "TARGET_VALUE_DEFAULT": 0xA,
+    }
+
+
+@pytest.mark.parametrize("width", [8, 16])
+def test_single_narrow_register_keeps_byte_address_bits(tmp_path, width):
+    rdl_path = tmp_path / "tiny.rdl"
+    rdl_path.write_text(f"""addrmap tiny {{
+        reg {{
+            regwidth = {width};
+            field {{ sw = rw; hw = r; }} value[{width - 1}:0];
+        }} target @ 0x0;
+    }};""")
+    content = _compact_verilog(convert(_compile(str(rdl_path)), "{{axi4l}}_regs.v.jinja2"))
+
+    assert "localparamintegerADDR_WIDTH=3;" in content
+    assert "inputwire[2:0]s_axi_awaddr" in content
+    assert "inputwire[2:0]s_axi_araddr" in content
+    assert _assigned_expression(content, "target_value_sel") == "(int_addr[2:2]=='h0)"
+    assert "[-1:0]" not in content
+
+
+@pytest.mark.parametrize(("body", "expected_width"), [
+    pytest.param("reg { field {} value[31:0]; } first @ 0;", 3, id="one-word"),
+    pytest.param("reg { field {} value[31:0]; } pair[2];", 3, id="two-words"),
+    pytest.param("reg { field {} value[31:0]; } target @ 0x3fc;", 10, id="last-word"),
+    pytest.param("reg { field {} value[31:0]; } target @ 0x400;", 11, id="next-word"),
+    pytest.param("reg { field {} value[31:0]; } pair[2] @ 0 += 0x400;", 11, id="sparse-array"),
+    pytest.param("addrmap { reg { field {} value[31:0]; } target @ 4; } block @ 0x400;", 11, id="nested-map"),
+    pytest.param("external mem { memwidth = 32; mementries = 4; sw = rw; } ram @ 0x400;", 11, id="memory-only"),
+    pytest.param("reg { field {} value[31:0]; } target @ 0x4000000000000000;", 63, id="large-integer-address"),
+])
+def test_address_width_uses_map_extent(tmp_path, body, expected_width):
+    rdl_path = tmp_path / "extent.rdl"
+    rdl_path.write_text(f"addrmap extent {{ {body} }};")
+    top = _compile(str(rdl_path))
+
+    for template in ("{{axi4l}}_regs.v.jinja2", "tb_{{axi4l}}_regs.v.jinja2"):
+        content = _compact_verilog(convert(top, template))
+        assert f"[{expected_width - 1}:0]s_axi_awaddr" in content
+        assert f"[{expected_width - 1}:0]s_axi_araddr" in content
+        assert "int_addr[1:2]" not in content
+
+
+def test_zero_size_model_uses_minimum_address_width():
+    top = _compile(GPIO_RDL)
+    # The compiler rejects empty RDL maps; exercise a programmatically emptied model.
+    top.inst.children.clear()
+    assert top.total_size == 0
+
+    for template in discover_templates().values():
+        content = convert(top, template + ".jinja2")
+        if template.endswith(".v"):
+            assert "[2:0]s_axi_awaddr" in _compact_verilog(content)
+            assert "[2:0]s_axi_araddr" in _compact_verilog(content)
+
+
 # ---------------------------------------------------------------------------
 # Listeners on gpio.rdl
 # ---------------------------------------------------------------------------

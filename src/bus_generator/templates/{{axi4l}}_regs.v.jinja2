@@ -335,13 +335,7 @@ module {{ top_name }}_regs (
 
     wire {{ field.name }}_sel;
 
-    {%- if addr_width > addr_width_lsb %}
-
     assign {{ field.name }}_sel = (int_addr[{{ addr_width-1 }}:{{ addr_width_lsb }}] == 'h{{ '{:x}'.format(field.aligned_address) }});
-    {%- else %}
-
-    assign {{ field.name }}_sel = (int_addr == {{ addr_width }}'h{{ '{:x}'.format(field.address) }});
-    {%- endif %}
     {%- endfor %}
     {%- for mem in mems %}
 
@@ -395,7 +389,7 @@ module {{ top_name }}_regs (
     {%- if field.implements_storage and field.is_sw_writable %}
     wire [{{ field.width-1 }}:0] {{ field.name }}_sw_mask;
 
-    assign {{ field.name }}_sw_mask = sw_byte_mask[{{ field.msb }}:{{ field.lsb }}];
+    assign {{ field.name }}_sw_mask = sw_byte_mask[{{ field.bus_msb }}:{{ field.bus_lsb }}];
     {%- endif %}
     {%- if field.implements_storage %}
 
@@ -405,9 +399,9 @@ module {{ top_name }}_regs (
         {%- if field.is_sw_writable %}
         end else if (int_wr_en && {{ field.name }}_sel) begin
             {%- if field.is_hw_writable %}
-            {{ field.name }}_value <= ({{ field.name }}_in & ~{{ field.name }}_sw_mask) | (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
+            {{ field.name }}_value <= ({{ field.name }}_in & ~{{ field.name }}_sw_mask) | (int_wr_data[{{ field.bus_msb }}:{{ field.bus_lsb }}] & {{ field.name }}_sw_mask);
             {%- else %}
-            {{ field.name }}_value <= ({{ field.name }}_value & ~{{ field.name }}_sw_mask) | (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
+            {{ field.name }}_value <= ({{ field.name }}_value & ~{{ field.name }}_sw_mask) | (int_wr_data[{{ field.bus_msb }}:{{ field.bus_lsb }}] & {{ field.name }}_sw_mask);
             {%- endif %}
         {%- endif %}
         {%- if field.is_hw_writable %}
@@ -562,7 +556,7 @@ module {{ top_name }}_regs (
         local_rd_data_next = {DATA_WIDTH{1'b0}};
         {%- for field in readable_fields %}
         if ({{ field.name }}_sel) begin
-            local_rd_data_next[{{ field.msb }}:{{ field.lsb }}] = local_rd_data_next[{{ field.msb }}:{{ field.lsb }}] | {{ field.name }}_value;
+            local_rd_data_next[{{ field.bus_msb }}:{{ field.bus_lsb }}] = local_rd_data_next[{{ field.bus_msb }}:{{ field.bus_lsb }}] | {{ field.name }}_value;
         end
         {%- endfor %}
     end

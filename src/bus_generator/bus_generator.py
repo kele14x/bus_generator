@@ -67,12 +67,14 @@ class GeneralListener(RDLListener):
         self._address = 0
         self._path = []
         self._root_addrmap = None
-        self._addr_width = 1
+        self._addr_width = ADDR_WIDTH_LSB + 1
         self._data_width = DATA_WIDTH
 
     def enter_Component(self, node: Node):
         if isinstance(node, AddrmapNode):
-            self._addr_width = ceil(log2(node.total_size))
+            self._addr_width = max(
+                ADDR_WIDTH_LSB + 1, max(0, node.total_size - 1).bit_length()
+            )
             if self._root_addrmap is None:
                 self._root_addrmap = node
             else:
@@ -203,6 +205,18 @@ class DataWidthValidationListener(RDLListener):
     def __init__(self):
         self.errors = []
 
+    def enter_Reg(self, node: RegNode):
+        address = node.absolute_address
+        end_address = address + node.size - 1
+        if (address >> ADDR_WIDTH_LSB) != (end_address >> ADDR_WIDTH_LSB):
+            self.errors.append(
+                "Register '%s' at 0x%x with regwidth %d occupies bytes "
+                "0x%x-0x%x across a %d-bit AXI word boundary; multiword "
+                "registers are not supported."
+                % (node.get_path(), address, node.get_property("regwidth"),
+                   address, end_address, DATA_WIDTH)
+            )
+
     def enter_Field(self, node: FieldNode):
         width = node.high - node.low + 1
         if width > DATA_WIDTH:
@@ -242,26 +256,33 @@ class FieldsGatheringListener(GeneralListener):
         self.fields = []
 
     def exit_Field(self, node: FieldNode):
+        byte_offset = self._address % (1 << ADDR_WIDTH_LSB)
+        bit_offset = byte_offset * 8
+        mask = 2 ** (node.high + 1) - 2**node.low
+        bus_mask = mask << bit_offset
         field = {
             "name": "_".join(self._path),
             "desc": node.get_property("desc"),
             "hierarchy": ".".join(self._path),
             "address": self._address,
-            "aligned_address": int(self._address / 4),
+            "aligned_address": self._address >> ADDR_WIDTH_LSB,
+            "bus_address": self._address - byte_offset,
+            "bus_msb": node.msb + bit_offset,
+            "bus_lsb": node.lsb + bit_offset,
+            "bus_low": node.low + bit_offset,
+            "bus_mask": bus_mask,
             "reset": node.get_property("reset") or 0,
             "width": node.high - node.low + 1,
             "high": node.high,
-            "mask": 2 ** (node.high + 1) - 2**node.low,
+            "mask": mask,
             "low": node.low,
             "msb": node.msb,
             "lsb": node.lsb,
             "wstrb_cases": [
-                {
-                    "be": 1 << byte,
-                    "mask": (2 ** (node.high + 1) - 2**node.low)
-                    & (0xFF << (byte * 8)),
-                }
-                for byte in range(node.low // 8, node.high // 8 + 1)
+                {"be": 1 << byte, "mask": bus_mask & (0xFF << (byte * 8))}
+                for byte in range(
+                    byte_offset + node.low // 8, byte_offset + node.high // 8 + 1
+                )
             ],
             "implements_storage": node.implements_storage,
             "sw": node.get_property("sw").name,
@@ -408,7 +429,7 @@ def convert(top: AddrmapNode, template_name: str):
     content = template.render(
         {
             "top_name": top.inst_name,
-            "addr_width": ceil(log2(top.total_size)),
+            "addr_width": max(ADDR_WIDTH_LSB + 1, max(0, top.total_size - 1).bit_length()),
             "addr_width_lsb": ADDR_WIDTH_LSB,
             "data_width": DATA_WIDTH,
             "fields": fields,

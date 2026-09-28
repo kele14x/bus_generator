@@ -43,6 +43,18 @@ Currently it:
 - The side-effect semantics themselves remain unsupported and are intentionally
   deferred; generated RTL must not be treated as implementing them.
 
+## TODO
+
+- Support registers spanning multiple aligned 32-bit AXI words, including narrow
+  registers that straddle a word boundary (e.g. 16 bits at `0x3`) and registers
+  wider than 32 bits (e.g. `regwidth=64; accesswidth=32`). Preserve logical fields
+  and hardware ports while adding per-word read slices, byte-lane write masks,
+  and regression tests. Until implemented, the CLI and `convert()` reject these
+  layouts before rendering, even when only low register bits contain fields.
+  This is a generator limitation, not invalid SystemRDL. Packed narrow registers
+  contained within one word use byte-lane mapping; C field addresses, masks, and
+  offsets describe aligned 32-bit MMIO words.
+
 ## Verification Notes
 
 The simulator policy requires an explicit selection:
