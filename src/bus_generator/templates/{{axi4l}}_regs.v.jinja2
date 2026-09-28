@@ -265,7 +265,7 @@ module {{ top_name }}_regs (
                 end
                 2'b11: begin
                     b_err_fifo[0] <= b_err_fifo[1];
-                    b_err_fifo[b_pending - 2'd1] <= int_wr_err;
+                    b_err_fifo[b_pending[0] - 1'b1] <= int_wr_err;
                     b_pending <= b_pending;
                 end
                 default: b_pending <= b_pending;
