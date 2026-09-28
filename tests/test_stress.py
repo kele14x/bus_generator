@@ -11,20 +11,22 @@ a re-run. Select Icarus, Verilator, or Questa with ``SIM=icarus``,
 ``SIM=verilator``, ``SIM=questa``, ``SIM=iverilog`` (an alias for Icarus), or
 ``SIM=vsim`` (an alias for Questa).
 ``SIM`` is required and the selected simulator executables must be available.
-Tests may skip when ``cocotb_tools`` or the generated DUT is missing.
+Missing simulator support or generated DUT artifacts fail rather than skip.
 """
 
 import os
 import random
+import re
 import shutil
 import sys
+from collections import Counter, deque
 from pathlib import Path
 
 import cocotb
 import pytest
 from bus_generator.bus_generator import FieldsGatheringListener, MemGatheringListener
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, SimTimeoutError, with_timeout
+from cocotb.triggers import FallingEdge, RisingEdge, SimTimeoutError, Timer, with_timeout
 from simulator_support import (
     require_simulator,
 )
@@ -73,11 +75,20 @@ MEM_READ_LATENCY_MIN = 1
 MEM_READ_LATENCY_MAX = 6
 
 
+def _initial_memory(mem, number):
+    mask = (1 << mem["width"]) - 1
+    return [
+        (0x13579BDF ^ ((number + 1) * 0x10203040) ^ (index * 0x01010101)) & mask
+        for index in range(mem["mementries"])
+    ]
+
+
 class RdlStressModel:
     def __init__(self, top):
         fields, mems = _load_rdl_metadata(top)
         self.regs = {}
-        self.mems = {m["name"]: [0] * m["mementries"] for m in mems}
+        # Initialize before the external models copy these reference contents.
+        self.mems = {m["name"]: _initial_memory(m, i) for i, m in enumerate(mems)}
         self.hw_fields = [f for f in fields if f["is_hw_writable"]]
         self.mem_specs = mems
 
@@ -142,7 +153,10 @@ class RdlStressModel:
 
 
 class ExternalMemoryModel:
-    def __init__(self, dut, mem, values, *, invalid_data=None):
+    """FIFO RAM with independent storage and a minimum one-cycle response latency."""
+
+    def __init__(self, dut, mem, values, *, invalid_data=0xDEADBEEF,
+                 latency=(MEM_READ_LATENCY_MIN, MEM_READ_LATENCY_MAX)):
         self.clk = dut.s_axi_aclk
         self.resetn = dut.s_axi_aresetn
         self.addr = getattr(dut, f"{mem['name']}_addr")
@@ -152,63 +166,53 @@ class ExternalMemoryModel:
         self.din = getattr(dut, f"{mem['name']}_din")
         self.dout = getattr(dut, f"{mem['name']}_dout")
         self.valid = getattr(dut, f"{mem['name']}_valid")
-        self.values = values
+        self.values = list(values)
         self.mask = (1 << mem["width"]) - 1
         self.invalid_data = invalid_data
+        self.latency = latency
+        assert 1 <= latency[0] <= latency[1]
+        self.hold = False
+        self.response_budget = None
+        self.pending = deque()
         seed = SEED ^ sum(ord(c) for c in mem["name"])
         self.random = random.Random(seed)
 
     async def run(self):
-        def sampled_int(sig):
-            try:
-                return int(sig.value)
-            except ValueError:
-                return 0
-
-        pending = []
-        self.dout.value = 0
+        cycle = 0
+        inactive = 0 if self.invalid_data is None else self.invalid_data & self.mask
+        self.dout.value = inactive
         self.valid.value = 0
         while True:
             await RisingEdge(self.clk)
-            resetn = sampled_int(self.resetn)
-            en = sampled_int(self.en)
-            we = sampled_int(self.we)
-            addr = sampled_int(self.addr)
-            din = sampled_int(self.din)
-            be = sampled_int(self.be)
-            if resetn == 0:
-                pending = []
-                self.dout.value = 0
+            if not int(self.resetn.value):
+                self.pending.clear()
+                self.dout.value = inactive
                 self.valid.value = 0
+                cycle = 0
                 continue
 
-            ready_idx = None
-            next_pending = []
-            for latency, idx in pending:
-                latency -= 1
-                if latency <= 0 and ready_idx is None:
-                    ready_idx = idx
-                else:
-                    next_pending.append((latency, idx))
+            cycle += 1
+            if int(self.en.value):
+                addr = int(self.addr.value)
+                assert 0 <= addr < len(self.values), f"RAM address out of bounds: {addr}"
+                payload = self.values[addr] & self.mask  # Read BEFORE this write.
+                latency = self.random.randint(*self.latency)
+                self.pending.append((cycle + latency - 1, payload))
+                if int(self.we.value):
+                    mask = _wstrb_to_mask(int(self.be.value), self.mask.bit_length())
+                    self.values[addr] = (payload & ~mask) | (int(self.din.value) & mask)
 
             self.valid.value = 0
-            if ready_idx is not None:
-                self.dout.value = self.values[ready_idx] & self.mask
-                self.valid.value = 1
-            elif self.invalid_data is not None:
+            if self.invalid_data is not None:
                 self.dout.value = self.invalid_data & self.mask
-
-            if en == 1:
-                if we == 1:
-                    write_mask = _wstrb_to_mask(be, self.mask.bit_length())
-                    self.values[addr] = (self.values[addr] & ~write_mask) | (
-                        din & write_mask
-                    )
-                else:
-                    latency = self.random.randint(MEM_READ_LATENCY_MIN, MEM_READ_LATENCY_MAX)
-                    next_pending.append((latency, addr))
-
-            pending = next_pending
+            # Inspect only the oldest request, never a younger ready request.
+            if (self.pending and self.pending[0][0] <= cycle and not self.hold
+                    and self.response_budget != 0):
+                _, payload = self.pending.popleft()
+                self.dout.value = payload
+                self.valid.value = 1
+                if self.response_budget is not None:
+                    self.response_budget -= 1
 
 
 class AxiLiteMaster:
@@ -648,6 +652,12 @@ async def stress_write_overlap(dut):
 async def stress_read_overlap(dut):
     top, model, master = await _setup_stress(dut, SEED_R, PipelinedReadMaster)
 
+    initializer = AxiLiteMaster(dut)
+    for number, op in enumerate(op for op in model.write_ops if op["kind"] == "reg"):
+        value = (0x89ABCDEF ^ (number * 0x10204081)) & DATA_MASK
+        assert await initializer.write(op["addr"], value, STRB_MASK) == 0
+        model.write(op, value, STRB_MASK, dut)
+
     count = int(os.environ.get("STRESS_R_COUNT", "64"))
     reads = [random.choice(model.read_ops) for _ in range(count)]
     expected = []
@@ -769,26 +779,645 @@ async def stress_mixed_overlap(dut):
     )
 
 
+def _monitor_widths(mems, address_width):
+    """Export checked internals through wrapper ports, even under Verilator."""
+    widths = {name: 1 for name in (
+        "issue head_valid head_write head_available priority_read read_waiting "
+        "write_waiting grant_read grant_write b_credit r_credit internal_idle "
+        "target_allowed int_rd_en int_wr_en int_rd_ack int_wr_ack int_rd_err "
+        "int_wr_err local_rd_ack local_wr_ack local_rd_err local_wr_err"
+    ).split()}
+    widths.update({name: 2 for name in (
+        "b_outstanding r_outstanding b_wait_ack r_wait_ack b_pending r_pending"
+    ).split()})
+    widths.update(int_addr=address_width, int_wr_data=32, int_wr_strb=4,
+                  int_rd_data=32, local_rd_data=32,
+                  head_target=len(mems) + 1, active_target=len(mems) + 1)
+    for mem in mems:
+        prefix = mem["name"] + "_"
+        widths.update({prefix + name: 1 for name in (
+            "tag_empty tag_bypass tag_push tag_pop response response_we "
+            "rd_done wr_done rd_ack wr_ack"
+        ).split()})
+        widths.update({prefix + "tags": 4, prefix + "tag_rptr": 2,
+                       prefix + "tag_wptr": 2, prefix + "tag_count": 3,
+                       prefix + "rd_data": 32})
+    return widths
+
+
+class RamContractBench:
+    """Validate physical issue order against independently submitted AXI contents."""
+
+    def __init__(self, dut, *, latency=(1, 6), combinational=False):
+        self.dut = dut
+        self.reference = RdlStressModel(_stress_top(dut))
+        self.mems = self.reference.mem_specs
+        assert self.mems, "directed RAM coverage requires memories"
+        self.widths = _monitor_widths(self.mems, len(dut.s_axi_araddr))
+        self.memories = {}
+        self.tasks = []
+        if not combinational:
+            for mem in self.mems:
+                model = ExternalMemoryModel(
+                    dut, mem, self.reference.mems[mem["name"]], latency=latency)
+                self.memories[mem["name"]] = model
+                self.tasks.append(cocotb.start_soon(model.run()))
+        self.cover = Counter()
+        self.transitions = set()
+        self.tag_pairs = set()
+        self.latencies = set()
+        self.last_tag = {}
+        self.last_target = None
+        self.cycle = 0
+        self.submitted = self.retired = self.aborted = 0
+        self.bready = self.rready = False
+        self._clear_queues()
+        AxiLiteMaster(dut)
+        dut.s_axi_aresetn.value = 0
+        self.reference.drive_hw_inputs(dut)
+        self.clock = cocotb.start_soon(Clock(dut.s_axi_aclk, 10, unit="ns").start())
+
+    def _clear_queues(self):
+        self.drive = {ch: deque() for ch in ("aw", "w", "ar")}
+        self.expected = {ch: deque() for ch in ("r", "w")}
+        self.responses = {ch: deque() for ch in ("r", "w")}
+        self.inflight = {ch: deque() for ch in ("r", "w")}
+        self.buffered = {ch: deque() for ch in ("r", "w")}
+        self.tags = {mem["name"]: deque() for mem in self.mems}
+        self.pointers = {mem["name"]: [0, 0] for mem in self.mems}
+        self.next_acks = {}
+        self.stalled = {}
+        self.last_response_cycle = {}
+
+    def submit(self, write, addr, data=0, strb=STRB_MASK):
+        tx = dict(write=bool(write), addr=addr, data=data & DATA_MASK,
+                  strb=strb & STRB_MASK, accepted=set(), issued=False)
+        ch = "w" if write else "r"
+        self.expected[ch].append(tx)
+        self.responses[ch].append(tx)
+        for bus in (("aw", "w") if write else ("ar",)):
+            self.drive[bus].append(tx)
+        self.submitted += 1
+        return tx
+
+    def _sample(self):
+        sample = {name: int(getattr(self.dut, "mon_" + name).value)
+                  for name in self.widths}
+        for suffix in ("awvalid awready wvalid wready arvalid arready "
+                       "bvalid bready bresp rvalid rready rresp rdata").split():
+            sample["axi_" + suffix] = int(getattr(self.dut, "s_axi_" + suffix).value)
+        for mem in self.mems:
+            for suffix in ("en", "we", "addr", "din", "be", "valid", "dout"):
+                name = mem["name"] + "_" + suffix
+                sample[name] = int(getattr(self.dut, name).value)
+        return sample
+
+    async def step(self, *, reset=False):
+        await FallingEdge(self.dut.s_axi_aclk)
+        self.dut.s_axi_aresetn.value = int(not reset)
+        for bus in ("aw", "w", "ar"):
+            queue = self.drive[bus]
+            getattr(self.dut, "s_axi_" + bus + "valid").value = int(bool(queue) and not reset)
+            if queue and not reset:
+                tx = queue[0]
+                if bus == "w":
+                    self.dut.s_axi_wdata.value = tx["data"]
+                    self.dut.s_axi_wstrb.value = tx["strb"]
+                else:
+                    getattr(self.dut, "s_axi_" + bus + "addr").value = tx["addr"]
+        self.dut.s_axi_bready.value = int(self.bready and not reset)
+        self.dut.s_axi_rready.value = int(self.rready and not reset)
+        # Sample before the edge to avoid races with RTL and RAM response updates.
+        await Timer(1, unit="ns")
+        sample = None if reset else self._sample()
+        await RisingEdge(self.dut.s_axi_aclk)
+        if sample is not None:
+            self.cycle += 1
+            self._check_edge(sample)
+        await Timer(1, unit="ns")
+
+    async def until(self, predicate, description, limit=300):
+        for _ in range(limit):
+            if predicate():
+                return
+            await self.step()
+        raise AssertionError(f"timeout waiting for {description}; coverage={self.cover}")
+
+    async def issue(self, write, addr, data=0, strb=STRB_MASK):
+        tx = self.submit(write, addr, data, strb)
+        await self.until(lambda: tx["issued"], f"physical/local issue of {tx}")
+        return tx
+
+    async def reset(self):
+        self.aborted += sum(map(len, self.responses.values()))
+        self._clear_queues()
+        self.last_target = None
+        self.last_tag.clear()
+        # RAM storage survives reset, but registers and ALL pending work do not.
+        fresh = RdlStressModel(_stress_top(self.dut))
+        self.reference.regs = fresh.regs
+        self.reference.drive_hw_inputs(self.dut)
+        for _ in range(3):
+            await self.step(reset=True)
+        state = self._sample()
+        for name in ("b_outstanding r_outstanding b_wait_ack r_wait_ack "
+                     "b_pending r_pending int_rd_ack int_wr_ack").split():
+            assert state[name] == 0, f"reset did not clear {name}"
+        for mem in self.mems:
+            name = mem["name"]
+            for suffix in ("tag_count", "tag_rptr", "tag_wptr", "rd_ack", "wr_ack", "rd_data"):
+                assert state[name + "_" + suffix] == 0, f"reset did not clear {name}_{suffix}"
+            if name in self.memories:
+                assert not self.memories[name].pending
+        await self.step()
+
+    async def drain(self):
+        self.bready = self.rready = True
+        for memory in self.memories.values():
+            memory.hold = False
+            memory.response_budget = None
+        await self.until(lambda: not any(self.responses.values()), "all AXI completions")
+        # Detect late duplicate/unsolicited completions, not just missing ones.
+        for _ in range(8):
+            await self.step()
+        assert not any(self.expected.values()) and not any(self.drive.values())
+        assert not any(self.inflight.values()) and not any(self.buffered.values())
+        assert not any(self.tags.values()) and not self.next_acks
+        assert self.retired + self.aborted == self.submitted
+        for name, memory in self.memories.items():
+            assert not memory.pending
+            assert memory.values == self.reference.mems[name]
+
+    def _decode(self, tx):
+        addr, write = tx["addr"], tx["write"]
+        for i, mem in enumerate(self.mems):
+            if mem["address"] <= addr < mem["address"] + 4 * mem["mementries"]:
+                permitted = mem["is_sw_writable" if write else "is_sw_readable"]
+                physical = permitted and (not write or tx["strb"] != 0)
+                return (1 << (i + 1)) if physical else 1, mem, (addr - mem["address"]) // 4, not permitted
+        reg = self.reference.regs.get(addr)
+        permitted = reg and reg["write_mask" if write else "read_mask"]
+        return 1, None, None, not permitted
+
+    def _check_edge(self, s):
+        old_wait = sum(len(q) for q in self.inflight.values())
+        assert s["internal_idle"] == (old_wait == 0)
+        if old_wait:
+            assert {tx["target"] for queue in self.inflight.values() for tx in queue} == {s["active_target"]}
+        assert s["target_allowed"] == (not old_wait or s["head_target"] == s["active_target"])
+        assert s["issue"] == bool(s["head_valid"] and s["target_allowed"]
+                                  and s["b_credit" if s["head_write"] else "r_credit"])
+        for ch, prefix in (("w", "b"), ("r", "r")):
+            wait, pending = len(self.inflight[ch]), len(self.buffered[ch])
+            assert s[prefix + "_wait_ack"] == wait
+            assert s[prefix + "_pending"] == pending
+            assert s[prefix + "_outstanding"] == wait + pending <= 2
+
+        # Check KI02 at the arbitration boundary, not by bypassing a blocked head.
+        for preferred, other, bit in (("read", "write", 1), ("write", "read", 0)):
+            pc, oc = ("r", "b") if preferred == "read" else ("b", "r")
+            if (s["head_available"] and s["read_waiting"] and s["write_waiting"]
+                    and s["priority_read"] == bit and not s[pc + "_credit"] and s[oc + "_credit"]):
+                assert s["grant_" + other] and not s["grant_" + preferred], "KI02 credit veto"
+                self.cover["eligible_" + other] += 1
+
+        # ACKs must be exactly last edge's source completion, not merely onehot.
+        sources = ["local"] + [m["name"] for m in self.mems]
+        for ch, kind in (("r", "rd"), ("w", "wr")):
+            active = [name for name in sources if s[name + "_" + kind + "_ack"]]
+            expected_sources = [name for name, channel in self.next_acks if channel == ch]
+            assert len(active) <= 1 and active == expected_sources, (active, expected_sources)
+            assert s["int_" + kind + "_ack"] == bool(active)
+            if active:
+                tx = self.next_acks[(active[0], ch)]
+                assert self.inflight[ch] and self.inflight[ch][0] is tx, "completion reordered/duplicated"
+                assert s["int_" + kind + "_err"] == (tx["resp"] != 0)
+                if ch == "r":
+                    assert s[active[0] + "_rd_data"] == tx["result"]
+                    assert s["int_rd_data"] == tx["result"], "ACK/data misalignment or unmasked source"
+        assert len(self.next_acks) <= 1, "two blocks completed together"
+
+        for bus, queue in self.drive.items():
+            if s["axi_" + bus + "valid"] and s["axi_" + bus + "ready"]:
+                tx = queue.popleft()
+                tx["accepted"].add(bus)
+        for ch, bus in (("r", "r"), ("w", "b")):
+            valid, ready = s["axi_" + bus + "valid"], s["axi_" + bus + "ready"]
+            payload = (s["axi_rdata"], s["axi_rresp"]) if ch == "r" else (s["axi_bresp"],)
+            if bus in self.stalled:
+                assert valid and payload == self.stalled[bus], f"{bus.upper()} payload changed under backpressure"
+                self.cover["stable_" + bus] += 1
+            self.stalled.pop(bus, None)
+            if valid:
+                assert self.buffered[ch], "unsolicited AXI response"
+                tx = self.buffered[ch][0]
+                assert self.responses[ch][0] is tx, "AXI per-channel order violated"
+                expected = (tx["result"], tx["resp"]) if ch == "r" else (tx["resp"],)
+                assert payload == expected, f"{bus}: {payload} != {expected}; tx={tx}"
+                if ready:
+                    self.buffered[ch].popleft()
+                    self.responses[ch].popleft()
+                    self.retired += 1
+                else:
+                    self.stalled[bus] = payload
+
+        for (source, ch), tx in self.next_acks.items():
+            self.inflight[ch].popleft()
+            self.buffered[ch].append(tx)
+            if source != "local" and not self.tags[source] and old_wait:
+                self.cover["empty_ack"] += 1
+                if s["head_valid"] and s["head_target"] != s["active_target"]:
+                    assert not s["issue"] and not s["target_allowed"], "lock released before ACK CAPTURE"
+                    self.cover["empty_ack_blocked"] += 1
+        next_acks = {}
+        issued = None
+        if s["issue"]:
+            ch = "w" if s["head_write"] else "r"
+            assert self.expected[ch], "unexpected internal issue"
+            tx = self.expected[ch].popleft()
+            assert tx["accepted"] == ({"aw", "w"} if tx["write"] else {"ar"})
+            assert s["int_addr"] == tx["addr"]
+            assert s["int_wr_en"] == tx["write"] and s["int_rd_en"] == (not tx["write"])
+            if tx["write"]:
+                assert (s["int_wr_data"], s["int_wr_strb"]) == (tx["data"], tx["strb"])
+            target, mem, index, error = self._decode(tx)
+            assert s["head_target"] == target
+            if old_wait:
+                assert target == s["active_target"], "target switched with uncaptured completions"
+            if self.last_target is not None and target != self.last_target:
+                self.transitions.add((self.last_target, target))
+                if s["b_pending"] or s["r_pending"]:
+                    self.cover["buffered_switch"] += 1
+            self.last_target = target
+            tx.update(target=target, resp=2 if error else 0, result=0,
+                      issued=True, cycle=self.cycle)
+            physical = mem is not None and target != 1
+            for spec in self.mems:
+                name = spec["name"]
+                selected = physical and spec is mem
+                assert s[name + "_en"] == selected, f"unexpected/missing physical request on {name}"
+                if selected:
+                    assert s[name + "_addr"] == index and s[name + "_we"] == tx["write"]
+                    if tx["write"]:
+                        assert s[name + "_din"] == tx["data"] & ((1 << spec["width"]) - 1)
+                        assert s[name + "_be"] == tx["strb"]
+            if physical:
+                name = mem["name"]
+                tx["snapshot"] = self.reference.mems[name][index]
+                tx["result"] = tx["snapshot"] if not tx["write"] else 0
+                if tx["write"]:
+                    mask = _wstrb_to_mask(tx["strb"], mem["width"])
+                    self.reference.mems[name][index] = (tx["snapshot"] & ~mask) | (tx["data"] & mask)
+                issued = (name, tx)
+                if name in self.last_tag:
+                    self.tag_pairs.add((self.last_tag[name], tx["write"]))
+                self.last_tag[name] = tx["write"]
+                self.cover["physical"] += 1
+            else:
+                if not error and mem is None:
+                    reg = self.reference.regs[tx["addr"]]
+                    if tx["write"]:
+                        mask = reg["write_mask"] & _wstrb_to_mask(tx["strb"])
+                        reg["value"] = (reg["value"] & ~mask) | (tx["data"] & mask)
+                    else:
+                        tx["result"] = reg["value"] & reg["read_mask"]
+                next_acks[("local", ch)] = tx
+                self.cover["local_error" if error else "local_okay"] += 1
+            self.inflight[ch].append(tx)
+        else:
+            assert not s["int_rd_en"] and not s["int_wr_en"]
+            assert not any(s[m["name"] + "_en"] for m in self.mems)
+
+        for mem in self.mems:
+            name = mem["name"]
+            queue = self.tags[name]
+            old_count = len(queue)
+            rp, wp = self.pointers[name]
+            assert s[name + "_tag_count"] == old_count <= 4
+            assert s[name + "_tag_empty"] == (old_count == 0)
+            assert (s[name + "_tag_rptr"], s[name + "_tag_wptr"]) == (rp, wp)
+            for offset, tx in enumerate(queue):
+                assert ((s[name + "_tags"] >> ((rp + offset) % 4)) & 1) == tx["write"]
+            req, valid = s[name + "_en"], s[name + "_valid"]
+            bypass = not old_count and req and valid
+            push, pop = req and not bypass, bool(old_count) and valid
+            response = valid and (old_count or req)
+            for suffix, expected in (("tag_bypass", bypass), ("tag_push", push),
+                                     ("tag_pop", pop), ("response", bool(response))):
+                assert s[name + "_" + suffix] == bool(expected), (name, suffix)
+            if req:
+                assert issued is not None and issued[0] == name
+                queue.append(issued[1])
+            if valid:
+                assert queue, f"unsolicited RAM response on {name}"
+                tx = queue.popleft()
+                ch = "w" if tx["write"] else "r"
+                assert s[name + "_response_we"] == tx["write"]
+                assert s[name + "_rd_done"] == (not tx["write"])
+                assert s[name + "_wr_done"] == tx["write"]
+                assert s[name + "_dout"] == tx["snapshot"], "RAM did not return request-edge snapshot"
+                next_acks[(name, ch)] = tx
+                self.latencies.add(self.cycle - tx["cycle"])
+                self.cover["raw_responses"] += 1
+                if self.last_response_cycle.get(name) == self.cycle - 1:
+                    self.cover["consecutive_responses"] += 1
+                self.last_response_cycle[name] = self.cycle
+            else:
+                assert not s[name + "_rd_done"] and not s[name + "_wr_done"]
+                assert s[name + "_dout"] == 0xDEADBEEF & ((1 << mem["width"]) - 1)
+            assert len(queue) <= 4
+            self.cover["max_tags"] = max(self.cover["max_tags"], len(queue))
+            self.cover["bypass"] += bool(bypass)
+            self.cover["enqueue_empty"] += bool(push and not old_count)
+            self.cover["push_pop"] += bool(push and pop)
+            if push and pop and tx["write"] != issued[1]["write"]:
+                self.cover["push_pop_different_tag"] += 1
+            self.cover["rptr_wrap"] += bool(pop and rp == 3)
+            self.cover["wptr_wrap"] += bool(push and wp == 3)
+            self.pointers[name] = [(rp + bool(pop)) % 4, (wp + bool(push)) % 4]
+        self.next_acks = next_acks
+
+
+def _rw_memory(bench):
+    return next(m for m in bench.mems if m["is_sw_readable"] and m["is_sw_writable"])
+
+
+def _unmapped_address(bench):
+    for address in range(0, 1 << len(bench.dut.s_axi_araddr), 4):
+        if address not in bench.reference.regs and all(
+            not m["address"] <= address < m["address"] + 4 * m["mementries"] for m in bench.mems
+        ):
+            return address
+    raise AssertionError("sample needs an unmapped address for error coverage")
+
+
+@cocotb.test(timeout_time=100, timeout_unit="us")
+async def ram_tag_fifo_delayed(dut):
+    bench = RamContractBench(dut)
+    await bench.reset()
+    mem = _rw_memory(bench)
+    memory = bench.memories[mem["name"]]
+    addr = mem["address"]
+    for batch, sequence in enumerate(((False, True, False, True),
+                                       (False, False, True, True),
+                                       (True, True, False, False))):
+        memory.hold = True
+        bench.bready = bench.rready = False
+        raw_before = bench.cover["raw_responses"]
+        for index, write in enumerate(sequence):
+            await bench.issue(write, addr, 0xA1B2C3D4 ^ (batch * 0x11111111 + index),
+                              (0x5, 0xA, 0x3, 0xC)[index])
+        assert len(bench.tags[mem["name"]]) == 4
+        assert bench.cover["raw_responses"] == raw_before, "not four requests before first response"
+        bench.cover["four_before_response"] += 1
+        # Fill AXI response slots and check payload stability before draining.
+        if batch == 0:
+            memory.hold = False
+            memory.response_budget = 1
+            bench.bready = bench.rready = True
+            retired = bench.retired
+            await bench.until(lambda: bench.retired == retired + 1, "first read retirement")
+            # Release the old W response one edge before the new R physically issues.
+            memory.response_budget = 1
+            replacement = bench.submit(False, addr)
+            await bench.until(lambda: replacement["issued"], "simultaneous old-W pop/new-R push")
+            assert bench.cover["push_pop_different_tag"], "simultaneous push/pop was not exercised"
+        bench.bready = bench.rready = False
+        memory.hold = False
+        memory.response_budget = None
+        await bench.until(lambda: not any(bench.inflight.values()), "registered ACK capture")
+        for _ in range(5):
+            await bench.step()
+        await bench.drain()
+    assert bench.cover["four_before_response"] == 3 and bench.cover["max_tags"] == 4
+    assert bench.tag_pairs == {(False, False), (False, True), (True, False), (True, True)}
+    for coverage in ("enqueue_empty", "push_pop", "rptr_wrap", "wptr_wrap",
+                     "stable_b", "stable_r", "consecutive_responses"):
+        assert bench.cover[coverage], f"missing coverage: {coverage}"
+    assert len(bench.latencies) > 1 and max(bench.latencies) > 6
+
+
+async def _delayed_switch(bench, source, operation):
+    memory = bench.memories[source["name"]]
+    memory.hold = True
+    bench.bready = bench.rready = False
+    await bench.issue(False, source["address"])
+    await bench.issue(True, source["address"] + 4, 0xD7C6B5A4, 0x6)
+    tx = bench.submit(*operation)
+    for _ in range(6):
+        await bench.step()
+    assert tx["accepted"] and not tx["issued"], "cross-target operation overtook delayed RAM"
+    before = bench.cover["empty_ack_blocked"]
+    memory.hold = False
+    await bench.until(lambda: tx["issued"], "target switch with buffered AXI responses")
+    assert bench.cover["empty_ack_blocked"] > before, "missed tag-empty/ACK-pending boundary"
+    assert bench.cover["buffered_switch"], "switch incorrectly requires AXI response drain"
+    for _ in range(12):
+        await bench.step()
+    await bench.drain()
+
+
+@cocotb.test(timeout_time=200, timeout_unit="us")
+async def ram_block_switching(dut):
+    bench = RamContractBench(dut)
+    await bench.reset()
+    source = _rw_memory(bench)
+    # Check data masking between distinct RAMs and LOCAL, both directions.
+    if bench.reference.regs:
+        local = next(addr for addr, reg in bench.reference.regs.items() if reg["write_mask"])
+        await bench.issue(True, local, 0xCAFEBABE)
+        await bench.drain()
+        await _delayed_switch(bench, source, (False, local))
+        for mem in bench.mems:
+            if mem is not source and mem["is_sw_readable"] and mem["is_sw_writable"]:
+                await _delayed_switch(bench, source, (False, mem["address"]))
+                await _delayed_switch(bench, mem, (False, source["address"] + 4))
+        await bench.issue(False, local)
+        await bench.issue(False, source["address"])
+        await bench.drain()
+        assert {(1, 2), (2, 1), (2, 4), (4, 2)} <= bench.transitions
+
+    operations = [(True, source["address"], 0xFFFFFFFF, 0)]
+    for mem in bench.mems:
+        for write in (False, True):
+            if not mem["is_sw_writable" if write else "is_sw_readable"]:
+                operations.append((write, mem["address"], 0xFEDCBA98, STRB_MASK))
+                if write:
+                    operations.append((write, mem["address"], 0xFFFFFFFF, 0))
+    hole = _unmapped_address(bench)
+    operations += [(False, hole), (True, hole, 0x11223344, 0xF), (True, hole, 0, 0)]
+    for operation in operations:
+        await _delayed_switch(bench, source, operation)
+    for mem in bench.mems:
+        if mem["is_sw_writable"]:
+            await bench.issue(True, mem["address"], 0x87654321, 0xB)
+        if mem["is_sw_readable"]:
+            await bench.issue(False, mem["address"])
+        await bench.drain()
+    assert bench.cover["local_error"] and bench.cover["local_okay"]
+    assert bench.cover["stable_b"] and bench.cover["stable_r"]
+
+
+@cocotb.test(timeout_time=100, timeout_unit="us")
+async def ram_reset_outstanding(dut):
+    bench = RamContractBench(dut)
+    await bench.reset()
+    mem = _rw_memory(bench)
+    memory = bench.memories[mem["name"]]
+    for ack_pending in (False, True):
+        bench.bready = bench.rready = False
+        memory.hold = True
+        memory.response_budget = None
+        for write in (False, True, False, True):
+            await bench.issue(write, mem["address"], 0x1234ABCD, 0xA)
+        # Also flush AXI-accepted but not internally issued head/back work.
+        bench.submit(False, _unmapped_address(bench))
+        for _ in range(3):
+            await bench.step()
+        if ack_pending:
+            memory.hold = False
+            memory.response_budget = 1
+            await bench.until(lambda: bool(bench.next_acks), "raw response before ACK capture")
+        assert any(bench.inflight.values()) and bench.tags[mem["name"]]
+        await bench.reset()
+        memory.hold = False
+        memory.response_budget = None
+        bench.bready = bench.rready = True
+        for _ in range(12):
+            await bench.step()
+        # Reference retains already-applied writes but forgets aborted responses.
+        for write in (False, True, False):
+            await bench.issue(write, mem["address"], 0x76543210, 0x5)
+        await bench.drain()
+        bench.cover["reset_ack" if ack_pending else "reset_tags"] += 1
+    assert bench.aborted >= 10 and bench.cover["reset_ack"] and bench.cover["reset_tags"]
+
+
+@cocotb.test(timeout_time=100, timeout_unit="us")
+async def ram_credit_arbitration(dut):
+    bench = RamContractBench(dut)
+    await bench.reset()
+    mem = _rw_memory(bench)
+    memory = bench.memories[mem["name"]]
+    for saturated_write in (False, True):
+        memory.hold = True
+        bench.bready = bench.rready = False
+        await bench.issue(saturated_write, mem["address"], 0x32107654, 0x3)
+        await bench.issue(saturated_write, mem["address"] + 4, 0xBA98FEDC, 0xC)
+        # Keep the saturated channel out of the head to isolate credit arbitration.
+        bench.submit(saturated_write, mem["address"], 0x01234567, 0xF)
+        bench.submit(not saturated_write, mem["address"], 0x89ABCDEF, 0x5)
+        bench.submit(not saturated_write, mem["address"] + 4, 0xFEDCBA98, 0xA)
+        key = "eligible_read" if saturated_write else "eligible_write"
+        await bench.until(lambda: bool(bench.cover[key]), f"KI02 {key}")
+        await bench.drain()
+    assert bench.cover["eligible_read"] and bench.cover["eligible_write"]
+
+
+async def _latency_contract(dut, *, combinational):
+    bench = RamContractBench(dut, latency=(1, 1), combinational=combinational)
+    await bench.reset()
+    bench.bready = bench.rready = True
+    mem = _rw_memory(bench)
+    for batch in range(4):
+        for index, write in enumerate((False, True, True, False)):
+            bench.submit(write, mem["address"] + 4 * (index % 2),
+                         0x10293847 ^ (batch * 0x1234567 + index), (0xF, 0x5, 0xA, 0xF)[index])
+        await bench.drain()
+    # Isolate each channel so arbitration cannot alternate the request types.
+    for write in (False, True):
+        for index in range(2):
+            bench.submit(write, mem["address"] + index * 4, 0xABCDEF01 ^ index, 0xF)
+        await bench.drain()
+    for spec in bench.mems:
+        for write in (False, True):
+            await bench.issue(write, spec["address"], 0x7654ABCD, 0x3)
+            await bench.drain()
+    assert bench.latencies == ({0} if combinational else {1}), bench.latencies
+    assert bench.tag_pairs == {(False, False), (False, True), (True, False), (True, True)}
+    assert bench.cover["consecutive_responses"]
+    if combinational:
+        assert bench.cover["bypass"] == bench.cover["physical"] > 0
+        assert bench.cover["max_tags"] == 0
+    else:
+        assert bench.cover["enqueue_empty"] and not bench.cover["bypass"]
+        assert bench.cover["rptr_wrap"] and bench.cover["wptr_wrap"]
+
+
+@cocotb.test(timeout_time=100, timeout_unit="us")
+async def ram_latency_zero(dut):
+    await _latency_contract(dut, combinational=True)
+
+
+@cocotb.test(timeout_time=100, timeout_unit="us")
+async def ram_latency_one(dut):
+    await _latency_contract(dut, combinational=False)
+
+
+def _write_contract_wrapper(source, top, build_dir, *, combinational):
+    """Build a test-only wrapper; no generated DUT artifact is modified."""
+    _, mems = _load_rdl_metadata(top)
+    header = source.read_text().split(");", 1)[0]
+    ports = re.findall(r"^\s*(input|output)\s+wire\s*(\[[^\]]+\])?\s*(\w+)", header, re.MULTILINE)
+    assert ports, f"could not parse ports in {source}"
+    address_width = next(int(width.strip("[]").split(":")[0]) + 1
+                         for _, width, name in ports if name == "s_axi_araddr")
+    monitors = _monitor_widths(mems, address_width)
+    outputs = {mem["name"] + suffix for mem in mems for suffix in ("_valid", "_dout")}
+    declarations = [f"    {'output' if combinational and name in outputs else direction} wire {width} {name}"
+                    for direction, width, name in ports]
+    declarations += [f"    output wire [{width - 1}:0] mon_{name}" for name, width in monitors.items()]
+    lines = ["`timescale 1ns/1ps", f"module stress_{top} (", ",\n".join(declarations), ");",
+             f"{top}_regs core (", ",\n".join(f"    .{name}({name})" for _, _, name in ports), ");"]
+    lines += [f"assign mon_{name} = core.{name};" for name in monitors]
+    if combinational:
+        for number, mem in enumerate(mems):
+            name, width = mem["name"], mem["width"]
+            lines.append(f"reg [{width - 1}:0] {name}_storage [0:{mem['mementries'] - 1}];")
+            lines.append("initial begin")
+            lines += [f"    {name}_storage[{index}] = {width}'h{value:x};"
+                      for index, value in enumerate(_initial_memory(mem, number))]
+            lines += ["end", f"assign {name}_valid = s_axi_aresetn && {name}_en;",
+                      f"assign {name}_dout = {name}_en ? {name}_storage[{name}_addr] : {width}'h{0xDEADBEEF & ((1 << width) - 1):x};",
+                      "always @(posedge s_axi_aclk) begin",
+                      f"    if (s_axi_aresetn && {name}_en && {name}_we) begin"]
+            for byte in range((width + 7) // 8):
+                high, low = min(width, byte * 8 + 8) - 1, byte * 8
+                lines.append(f"        if ({name}_be[{byte}]) {name}_storage[{name}_addr][{high}:{low}] <= {name}_din[{high}:{low}];")
+            lines += ["    end", "end"]
+    lines += ["endmodule", ""]
+    wrapper = build_dir / f"stress_{top}.v"
+    wrapper.write_text("\n".join(lines))
+    return wrapper
+
+
 def _run_cocotb_test(top, testcase):
     try:
         sim = require_simulator(os.environ, shutil.which)
     except (RuntimeError, ValueError) as error:
         pytest.fail(str(error), pytrace=False)
-    pytest.importorskip("cocotb_tools.runner")
-
     dut = GENERATED / "axi4l" / f"{top}_regs.v"
     if not dut.is_file():
-        pytest.skip(f"missing {dut}; run `make artifacts` first")
+        pytest.fail(f"missing {dut}; run `make artifacts` first", pytrace=False)
 
     if str(TESTS_DIR) not in sys.path:
         sys.path.insert(0, str(TESTS_DIR))
     from cocotb_tools.runner import get_runner
 
     runner = get_runner(sim)
+    build_dir = REPO_ROOT / "sim_build" / "stress" / top / sim / testcase
+    build_dir.mkdir(parents=True, exist_ok=True)
     hdl_toplevel = f"{top}_regs"
+    sources = [str(dut)]
+    if testcase.startswith("ram_"):
+        wrapper = _write_contract_wrapper(
+            dut, top, build_dir, combinational=testcase == "ram_latency_zero")
+        sources.append(str(wrapper))
+        hdl_toplevel = f"stress_{top}"
     runner.build(
-        sources=[str(dut)],
+        sources=sources,
         hdl_toplevel=hdl_toplevel,
+        build_dir=str(build_dir),
         always=True,
     )
 
@@ -799,6 +1428,7 @@ def _run_cocotb_test(top, testcase):
             test_module="test_stress",
             hdl_toplevel=hdl_toplevel,
             testcase=testcase,
+            test_dir=str(build_dir),
             seed=0xC0FFEE,
         )
     finally:
@@ -812,6 +1442,16 @@ def _run_cocotb_test(top, testcase):
 @pytest.mark.parametrize("testcase", ["memory_read_held_data", "memory_read_valid_pulse"])
 def test_memory_read_timing(testcase):
     _run_cocotb_test("ram", testcase)
+
+
+@pytest.mark.sim
+@pytest.mark.parametrize("top", ["ram", "mem_access"])
+@pytest.mark.parametrize("testcase", [
+    "ram_tag_fifo_delayed", "ram_block_switching", "ram_reset_outstanding",
+    "ram_credit_arbitration", "ram_latency_zero", "ram_latency_one",
+])
+def test_ram_contract(top, testcase):
+    _run_cocotb_test(top, testcase)
 
 
 @pytest.mark.sim

@@ -65,18 +65,19 @@ module {{ top_name }}_regs (
     localparam integer ADDR_WIDTH = {{ addr_width }};
     localparam integer DATA_WIDTH = {{ data_width }};
     localparam integer STRB_WIDTH = DATA_WIDTH / 8;
+    localparam integer TARGET_COUNT = {{ mems | length + 1 }};
 
     reg  [ADDR_WIDTH-1:0] int_addr;
     reg  [DATA_WIDTH-1:0] int_wr_data;
     reg  [STRB_WIDTH-1:0] int_wr_strb;
     wire                  int_wr_en;
     wire                  int_rd_en;
-    reg                   int_wr_ack;
-    reg                   int_wr_err;
-    reg                   int_wr_err_next;
-    reg                   int_rd_ack;
-    reg                   int_rd_err;
-    reg                   int_rd_err_next;
+    wire                  int_wr_ack;
+    wire                  int_wr_err;
+    wire                  int_wr_err_next;
+    wire                  int_rd_ack;
+    wire                  int_rd_err;
+    wire                  int_rd_err_next;
     reg  [DATA_WIDTH-1:0] int_rd_data;
 
     reg                   head_valid;
@@ -116,26 +117,40 @@ module {{ top_name }}_regs (
     wire                  b_credit;
     wire                  r_credit;
 
-    wire                  rd_mem_pending;
-    wire                  rd_mem_valid;
-    wire                  rd_mem_issue;
+    wire [TARGET_COUNT-1:0] head_target;
+    reg  [TARGET_COUNT-1:0] active_target;
+    wire                   internal_idle;
+    wire                   target_allowed;
+    wire                   read_eligible;
+    wire                   write_eligible;
 
-    assign issue            = head_valid && (head_write ? b_credit : (r_credit && !rd_mem_pending));
+    // Empty tags do not imply idle: registered ACKs may still await capture.
+    assign internal_idle    = (b_wait_ack == 2'd0) && (r_wait_ack == 2'd0);
+    assign target_allowed   = internal_idle || (head_target == active_target);
+    assign issue            = head_valid && target_allowed && (head_write ? b_credit : r_credit);
     assign int_wr_en        = issue && head_write;
     assign int_rd_en        = issue && !head_write;
     assign head_available   = !head_valid || issue;
     assign read_waiting     = ar_back_valid || s_axi_arvalid;
     assign write_waiting    = aw_back_valid && w_back_valid;
-    assign grant_read       = head_available && (r_credit && !rd_mem_pending) &&
-                              read_waiting && (!write_waiting || priority_read);
-    assign grant_write      = head_available && b_credit &&
-                              write_waiting && (!read_waiting || !priority_read);
+    assign read_eligible    = read_waiting && r_credit;
+    assign write_eligible   = write_waiting && b_credit;
+    assign grant_read       = head_available && read_eligible && (!write_eligible || priority_read);
+    assign grant_write      = head_available && write_eligible && (!read_eligible || !priority_read);
     assign load_read_back   = grant_read && ar_back_valid;
     assign load_read_direct = grant_read && !ar_back_valid && s_axi_arvalid;
 
     assign s_axi_arready = !ar_back_valid || load_read_back;
     assign s_axi_awready = !aw_back_valid || grant_write;
     assign s_axi_wready  = !w_back_valid || grant_write;
+
+    always @(posedge s_axi_aclk) begin
+        if (!s_axi_aresetn) begin
+            active_target <= {{ mems | length + 1 }}'d1;
+        end else if (issue && internal_idle) begin
+            active_target <= head_target;
+        end
+    end
 
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
@@ -330,53 +345,35 @@ module {{ top_name }}_regs (
     {%- endif %}
     {%- endfor %}
 
-    always @(*) begin
-        int_wr_err_next = 1'b1;
+    assign int_wr_err_next = !(1'b0
         {%- for field in writable_fields %}
-        if ({{ field.name }}_strb) begin
-            int_wr_err_next = 1'b0;
-        end
+        || {{ field.name }}_strb
         {%- endfor %}
         {%- for mem in writable_mems %}
-        if ({{ mem.name }}_strb) begin
-            int_wr_err_next = 1'b0;
-        end
+        || {{ mem.name }}_strb
         {%- endfor %}
-    end
-
-    always @(*) begin
-        int_rd_err_next = 1'b1;
+    );
+    assign int_rd_err_next = !(1'b0
         {%- for field in readable_fields %}
-        if ({{ field.name }}_strb) begin
-            int_rd_err_next = 1'b0;
-        end
+        || {{ field.name }}_strb
         {%- endfor %}
         {%- for mem in readable_mems %}
-        if ({{ mem.name }}_strb) begin
-            int_rd_err_next = 1'b0;
-        end
+        || {{ mem.name }}_strb
         {%- endfor %}
-    end
+    );
 
-    always @(posedge s_axi_aclk) begin
-        if (!s_axi_aresetn) begin
-            int_wr_ack <= 1'b0;
-            int_wr_err <= 1'b0;
-            int_rd_ack <= 1'b0;
-            int_rd_err <= 1'b0;
-        end else begin
-            int_wr_ack <= int_wr_en;
-            if (int_wr_en) begin
-                int_wr_err <= int_wr_err_next;
-            end
-
-            int_rd_ack <= (int_rd_en && !rd_mem_pending && !rd_mem_issue) ||
-                          (rd_mem_pending && rd_mem_valid);
-            if (int_rd_en) begin
-                int_rd_err <= int_rd_err_next;
-            end
-        end
-    end
+    {%- for mem in mems %}
+    wire {{ mem.name }}_target;
+    assign {{ mem.name }}_target = {{ mem.name }}_strb &&
+        ((head_write && {{ "1'b1" if mem.is_sw_writable else "1'b0" }} && (|int_wr_strb)) ||
+         (!head_write && {{ "1'b1" if mem.is_sw_readable else "1'b0" }}));
+    {%- endfor %}
+    assign head_target = {
+        {%- for mem in mems | reverse %}
+        {{ mem.name }}_target,
+        {%- endfor %}
+        !(1'b0{% for mem in mems %} || {{ mem.name }}_target{% endfor %})
+    };
 
 
     //--------------------------------------------------------------------------
@@ -440,62 +437,91 @@ module {{ top_name }}_regs (
 
 
     //--------------------------------------------------------------------------
-    // Memory logic
+    // Memory adapters
     //--------------------------------------------------------------------------
+    {%- if mems %}
+
+    // Every en requires one in-order valid response, including writes.
+    {%- endif %}
     {%- for mem in mems %}
 
     // Memory {{ mem.hierarchy }} @'h{{ '{:x}'.format(mem.address) }}
 
-    reg {{ mem.name }}_rd_sel;
+    reg  [3:0] {{ mem.name }}_tags;
+    reg  [1:0] {{ mem.name }}_tag_rptr;
+    reg  [1:0] {{ mem.name }}_tag_wptr;
+    reg  [2:0] {{ mem.name }}_tag_count;
+    wire       {{ mem.name }}_tag_empty;
+    wire       {{ mem.name }}_tag_bypass;
+    wire       {{ mem.name }}_tag_push;
+    wire       {{ mem.name }}_tag_pop;
+    wire       {{ mem.name }}_response;
+    wire       {{ mem.name }}_response_we;
+    wire       {{ mem.name }}_rd_done;
+    wire       {{ mem.name }}_wr_done;
+    reg        {{ mem.name }}_rd_ack;
+    reg        {{ mem.name }}_wr_ack;
+    reg  [{{ mem.width-1 }}:0] {{ mem.name }}_rd_data;
+
+    assign {{ mem.name }}_addr = int_addr[{{ mem.addr_msb }}:{{ mem.addr_lsb }}];
+    assign {{ mem.name }}_en   = issue && head_target[{{ loop.index }}];
+    assign {{ mem.name }}_we   = {{ mem.name }}_en && head_write;
+    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
+    assign {{ mem.name }}_be   = {{ mem.name }}_we ? int_wr_strb : {STRB_WIDTH{1'b0}};
+
+    assign {{ mem.name }}_tag_empty   = {{ mem.name }}_tag_count == 3'd0;
+    assign {{ mem.name }}_tag_bypass  = {{ mem.name }}_tag_empty && {{ mem.name }}_en && {{ mem.name }}_valid;
+    assign {{ mem.name }}_tag_push    = {{ mem.name }}_en && !{{ mem.name }}_tag_bypass;
+    assign {{ mem.name }}_tag_pop     = !{{ mem.name }}_tag_empty && {{ mem.name }}_valid;
+    assign {{ mem.name }}_response    = {{ mem.name }}_valid && (!{{ mem.name }}_tag_empty || {{ mem.name }}_en);
+    assign {{ mem.name }}_response_we = {{ mem.name }}_tag_empty ? {{ mem.name }}_we : {{ mem.name }}_tags[{{ mem.name }}_tag_rptr];
+    assign {{ mem.name }}_rd_done     = {{ mem.name }}_response && !{{ mem.name }}_response_we;
+    assign {{ mem.name }}_wr_done     = {{ mem.name }}_response && {{ mem.name }}_response_we;
 
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
-            {{ mem.name }}_rd_sel <= 1'b0;
-        {%- if mem.is_sw_readable %}
-        end else if (int_rd_en) begin
-            {{ mem.name }}_rd_sel <= {{ mem.name }}_strb;
-        {%- endif %}
-        end else if (int_rd_ack) begin
-            {{ mem.name }}_rd_sel <= 1'b0;
+            {{ mem.name }}_tags      <= 4'd0;
+            {{ mem.name }}_tag_rptr  <= 2'd0;
+            {{ mem.name }}_tag_wptr  <= 2'd0;
+            {{ mem.name }}_tag_count <= 3'd0;
+            {{ mem.name }}_rd_ack    <= 1'b0;
+            {{ mem.name }}_wr_ack    <= 1'b0;
+            {{ mem.name }}_rd_data   <= {{ mem.width }}'d0;
+        end else begin
+            if ({{ mem.name }}_tag_push) begin
+                {{ mem.name }}_tags[{{ mem.name }}_tag_wptr] <= {{ mem.name }}_we;
+                {{ mem.name }}_tag_wptr <= {{ mem.name }}_tag_wptr + 2'd1;
+            end
+            if ({{ mem.name }}_tag_pop) begin
+                {{ mem.name }}_tag_rptr <= {{ mem.name }}_tag_rptr + 2'd1;
+            end
+            case ({ {{ mem.name }}_tag_push, {{ mem.name }}_tag_pop })
+                2'b10: {{ mem.name }}_tag_count <= {{ mem.name }}_tag_count + 3'd1;
+                2'b01: {{ mem.name }}_tag_count <= {{ mem.name }}_tag_count - 3'd1;
+                default: {{ mem.name }}_tag_count <= {{ mem.name }}_tag_count;
+            endcase
+
+            {{ mem.name }}_rd_ack <= {{ mem.name }}_rd_done;
+            {{ mem.name }}_wr_ack <= {{ mem.name }}_wr_done;
+            if ({{ mem.name }}_rd_done) begin
+                {{ mem.name }}_rd_data <= {{ mem.name }}_dout;
+            end
         end
     end
-
-    assign {{ mem.name }}_addr = int_addr[{{ mem.addr_msb }}:{{ mem.addr_lsb }}];
-    {%- if mem.is_sw_readable and mem.is_sw_writable %}
-    assign {{ mem.name }}_en   = ((int_rd_en && {{ mem.name }}_strb) ||
-                                  (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb)));
-    assign {{ mem.name }}_we   = (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb));
-    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
-    assign {{ mem.name }}_be   = (int_wr_en && {{ mem.name }}_strb) ? int_wr_strb : {STRB_WIDTH{1'b0}};
-    {%- elif mem.is_sw_readable %}
-    assign {{ mem.name }}_en   = (int_rd_en && {{ mem.name }}_strb);
-    assign {{ mem.name }}_we   = 1'b0;
-    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
-    assign {{ mem.name }}_be   = {STRB_WIDTH{1'b0}};
-    {%- elif mem.is_sw_writable %}
-    assign {{ mem.name }}_en   = (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb));
-    assign {{ mem.name }}_we   = (int_wr_en && {{ mem.name }}_strb && (|int_wr_strb));
-    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
-    assign {{ mem.name }}_be   = (int_wr_en && {{ mem.name }}_strb) ? int_wr_strb : {STRB_WIDTH{1'b0}};
-    {%- else %}
-    assign {{ mem.name }}_en   = 1'b0;
-    assign {{ mem.name }}_we   = 1'b0;
-    assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
-    assign {{ mem.name }}_be   = {STRB_WIDTH{1'b0}};
-    {%- endif %}
     {%- endfor %}
 
-    assign rd_mem_pending = 1'b0{% for mem in readable_mems %} || {{ mem.name }}_rd_sel{% endfor %};
-    assign rd_mem_valid   = 1'b0{% for mem in readable_mems %} || ({{ mem.name }}_rd_sel && {{ mem.name }}_valid){% endfor %};
-    assign rd_mem_issue   = 1'b0{% for mem in readable_mems %} || (int_rd_en && {{ mem.name }}_strb){% endfor %};
-
 
     //--------------------------------------------------------------------------
-    // Register readback
+    // Local responses
     //--------------------------------------------------------------------------
 
-    reg  [DATA_WIDTH-1:0] field_rd_data;
-    reg                   field_strb;
+    wire                  local_rd_en;
+    wire                  local_wr_en;
+    reg                   local_rd_ack;
+    reg                   local_wr_ack;
+    reg                   local_rd_err;
+    reg                   local_wr_err;
+    reg  [DATA_WIDTH-1:0] local_rd_data;
     {%- if readable_fields %}
     reg  [DATA_WIDTH-1:0] field_rd_data_next;
     {%- else %}
@@ -504,11 +530,14 @@ module {{ top_name }}_regs (
     assign field_rd_data_next = {DATA_WIDTH{1'b0}};
     {%- endif %}
 
+    assign local_rd_en = int_rd_en && head_target[0];
+    assign local_wr_en = int_wr_en && head_target[0];
+
     {%- if readable_fields %}
     always @(*) begin
         field_rd_data_next = {DATA_WIDTH{1'b0}};
         {%- for field in readable_fields %}
-        if (int_rd_en && {{ field.name }}_strb) begin
+        if ({{ field.name }}_strb) begin
             field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] = field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] | {{ field.name }}_value;
         end
         {%- endfor %}
@@ -517,33 +546,42 @@ module {{ top_name }}_regs (
 
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
-            field_rd_data <= {DATA_WIDTH{1'b0}};
+            local_rd_ack  <= 1'b0;
+            local_wr_ack  <= 1'b0;
+            local_rd_err  <= 1'b0;
+            local_wr_err  <= 1'b0;
+            local_rd_data <= {DATA_WIDTH{1'b0}};
         end else begin
-            field_rd_data <= field_rd_data_next;
+            local_rd_ack <= local_rd_en;
+            local_wr_ack <= local_wr_en;
+            if (local_rd_en) begin
+                local_rd_err  <= int_rd_err_next;
+                local_rd_data <= field_rd_data_next;
+            end
+            if (local_wr_en) begin
+                local_wr_err <= int_wr_err_next;
+            end
         end
     end
 
-    always @(posedge s_axi_aclk) begin
-        if (!s_axi_aresetn) begin
-            field_strb <= 1'b0;
-        end else begin
-            field_strb <= 1'b0;
-            {%- for field in readable_fields %}
-            if (int_rd_en && {{ field.name }}_strb) begin
-                field_strb <= 1'b1;
-            end
-            {%- endfor %}
-        end
-    end
+
+    //--------------------------------------------------------------------------
+    // Response merge
+    //--------------------------------------------------------------------------
+
+    assign int_rd_ack = local_rd_ack{% for mem in mems %} || {{ mem.name }}_rd_ack{% endfor %};
+    assign int_wr_ack = local_wr_ack{% for mem in mems %} || {{ mem.name }}_wr_ack{% endfor %};
+    assign int_rd_err = local_rd_ack && local_rd_err;
+    assign int_wr_err = local_wr_ack && local_wr_err;
 
     always @(*) begin
         int_rd_data = {DATA_WIDTH{1'b0}};
-        if (field_strb) begin
-            int_rd_data = int_rd_data | field_rd_data;
+        if (local_rd_ack) begin
+            int_rd_data = local_rd_data;
         end
         {%- for mem in mems %}
-        if ({{ mem.name }}_rd_sel) begin
-            int_rd_data[{{ mem.width-1 }}:0] = int_rd_data[{{ mem.width-1 }}:0] | {{ mem.name }}_dout;
+        if ({{ mem.name }}_rd_ack) begin
+            int_rd_data[{{ mem.width-1 }}:0] = int_rd_data[{{ mem.width-1 }}:0] | {{ mem.name }}_rd_data;
         end
         {%- endfor %}
     end

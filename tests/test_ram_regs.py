@@ -205,6 +205,28 @@ async def test_ram_read(dut):
         f"RAM0 read addr=0x100: expected=0x12345678, actual=0x{data:08x}"
     )
 
+    await axi_write(dut, 0x104, 0x89ABCDEF)
+    await axi_write(dut, 0x134, 0x76543210)
+    await axi_write(dut, 0x100, 0xAABBCCDD, strb=0x5)
+    await axi_write(dut, 0x104, 0x10203040, strb=0xA)
+    await axi_write(dut, 0x134, 0xFFEEDDCC, strb=0x8)
+    expected = {0x100: 0x12BB56DD, 0x104: 0x10AB30EF, 0x134: 0xFF543210}
+    for addr in (0x134, 0x100, 0x104):
+        data = await axi_read(dut, addr)
+        assert data == expected[addr], (
+            f"RAM0 partial write addr=0x{addr:x}: "
+            f"expected=0x{expected[addr]:08x}, actual=0x{data:08x}"
+        )
+
+    for addr in (0x104, 0x134, 0x100):
+        await axi_write(dut, addr, 0xDEADBEEF, strb=0)
+    for addr in (0x100, 0x134, 0x104):
+        data = await axi_read(dut, addr)
+        assert data == expected[addr], (
+            f"RAM0 zero-strobe write addr=0x{addr:x}: "
+            f"expected=0x{expected[addr]:08x}, actual=0x{data:08x}"
+        )
+
 
 def test_ram_regs_runner():
     sim = os.getenv("SIM", "questa")

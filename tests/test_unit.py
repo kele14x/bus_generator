@@ -3,6 +3,7 @@
 
 import importlib
 import importlib.metadata
+import re
 import subprocess
 import sys
 
@@ -427,9 +428,218 @@ def test_simple_no_mems(simple_top):
         pytest.param(GPIO_RDL, "gpio", id="gpio"),
         pytest.param(RAM_RDL, "ram", id="ram"),
         pytest.param(SIMPLE_RDL, "simple", id="simple"),
+        pytest.param(MEM_ACCESS_RDL, "mem_access", id="mem_access"),
     ],
 )
 def test_convert_renders_module(rdl_path, top_name):
     content = convert(_compile(rdl_path), "{{axi4l}}_regs.v.jinja2")
     assert f"module {top_name}_regs (" in content
     assert "s_axi_awaddr" in content
+
+
+def _compact_verilog(content):
+    """Ignore formatting/comments, but retain expressions and signal widths."""
+    return re.sub(r"\s+", "", re.sub(r"//[^\n]*", "", content))
+
+
+def _assigned_expression(content, signal):
+    assignments = re.findall(rf"assign{re.escape(signal)}=([^;]+);", content)
+    assert len(assignments) == 1, f"Expected one continuous driver for {signal}"
+    return assignments[0]
+
+
+@pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])
+def test_convert_renders_response_targets(rdl_path):
+    top = _compile(rdl_path)
+    mems = _gather(top, MemGatheringListener).mems
+    content = _compact_verilog(convert(top, "{{axi4l}}_regs.v.jinja2"))
+
+    assert f"localparamintegerTARGET_COUNT={len(mems) + 1};" in content
+    assert "wire[TARGET_COUNT-1:0]head_target;" in content
+    assert "reg[TARGET_COUNT-1:0]active_target;" in content
+    assert _assigned_expression(content, "internal_idle") == (
+        "(b_wait_ack==2'd0)&&(r_wait_ack==2'd0)"
+    )
+    assert _assigned_expression(content, "target_allowed") == (
+        "internal_idle||(head_target==active_target)"
+    )
+    assert _assigned_expression(content, "issue") == (
+        "head_valid&&target_allowed&&(head_write?b_credit:r_credit)"
+    )
+    assert "if(issue&&internal_idle)beginactive_target<=head_target;" in content
+    for obsolete in ("_rd_sel", "rd_mem_pending", "rd_mem_valid", "rd_mem_issue"):
+        assert obsolete not in content
+
+    targets = [f"{mem['name']}_target" for mem in mems]
+    local_target = "!(" + "||".join(["1'b0"] + targets) + ")"
+    assert _assigned_expression(content, "head_target") == (
+        "{" + ",".join(list(reversed(targets)) + [local_target]) + "}"
+    )
+    if not mems:
+        assert "head_target[TARGET_COUNT-1:1]" not in content
+        assert "_tags" not in content
+    assert "[-1:0]" not in content
+
+    for mem in mems:
+        writable = int(mem["is_sw_writable"])
+        readable = int(mem["is_sw_readable"])
+        # Decode before issue: zero-strobe/prohibited operations use LOCAL.
+        assert _assigned_expression(content, f"{mem['name']}_target") == (
+            f"{mem['name']}_strb&&((head_write&&1'b{writable}&&(|int_wr_strb))"
+            f"||(!head_write&&1'b{readable}))"
+        )
+        for direction, allowed in (("wr", writable), ("rd", readable)):
+            error_decode = _assigned_expression(content, f"int_{direction}_err_next")
+            assert (f"{mem['name']}_strb" in error_decode) == bool(allowed)
+
+
+@pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])
+def test_convert_renders_registered_response_sources(rdl_path):
+    top = _compile(rdl_path)
+    mems = _gather(top, MemGatheringListener).mems
+    content = _compact_verilog(convert(top, "{{axi4l}}_regs.v.jinja2"))
+
+    for direction in ("rd", "wr"):
+        assert f"wireint_{direction}_ack;" in content
+        assert f"reglocal_{direction}_ack;" in content
+        assert f"reglocal_{direction}_err;" in content
+        assert _assigned_expression(content, f"local_{direction}_en") == (
+            f"int_{direction}_en&&head_target[0]"
+        )
+        assert f"local_{direction}_ack<=local_{direction}_en;" in content
+        assert f"local_{direction}_ack<=1'b0;" in content
+        assert f"local_{direction}_err<=1'b0;" in content
+        assert _assigned_expression(content, f"int_{direction}_ack") == "||".join(
+            [f"local_{direction}_ack"] + [f"{m['name']}_{direction}_ack" for m in mems]
+        )
+        assert _assigned_expression(content, f"int_{direction}_err") == (
+            f"local_{direction}_ack&&local_{direction}_err"
+        )
+        assert f"int_{direction}_ack<=" not in content
+        assert f"int_{direction}_err<=" not in content
+
+    assert "reg[DATA_WIDTH-1:0]local_rd_data;" in content
+    assert "local_rd_data<={DATA_WIDTH{1'b0}};" in content
+    assert (
+        "if(local_rd_en)beginlocal_rd_err<=int_rd_err_next;"
+        "local_rd_data<=field_rd_data_next;"
+    ) in content
+    assert "if(local_wr_en)beginlocal_wr_err<=int_wr_err_next;" in content
+    assert "field_rd_data_next={DATA_WIDTH{1'b0}};" in content
+    assert "if(local_rd_ack)beginint_rd_data=local_rd_data;" in content
+    assert "int_rd_data<=" not in content
+    merge_terms = re.findall(r"int_rd_data(?:\[[^]]+\])?=([^;]+);", content)
+    assert len(merge_terms) == 2 + len(mems)
+    for term in merge_terms:
+        assert "_dout" not in term
+        assert "int_addr" not in term
+        assert "head_target" not in term
+        assert "active_target" not in term
+
+    for index, mem in enumerate(mems, 1):
+        name = mem["name"]
+        for suffix, width in (("tags", 4), ("tag_rptr", 2), ("tag_wptr", 2), ("tag_count", 3)):
+            assert f"reg[{width - 1}:0]{name}_{suffix};" in content
+            assert f"{name}_{suffix}<={width}'d0;" in content
+        expected_assignments = {
+            "en": f"issue&&head_target[{index}]",
+            "we": f"{name}_en&&head_write",
+            "be": f"{name}_we?int_wr_strb:{{STRB_WIDTH{{1'b0}}}}",
+            "tag_empty": f"{name}_tag_count==3'd0",
+            "tag_bypass": f"{name}_tag_empty&&{name}_en&&{name}_valid",
+            "tag_push": f"{name}_en&&!{name}_tag_bypass",
+            "tag_pop": f"!{name}_tag_empty&&{name}_valid",
+            "response": f"{name}_valid&&(!{name}_tag_empty||{name}_en)",
+            "response_we": f"{name}_tag_empty?{name}_we:{name}_tags[{name}_tag_rptr]",
+            "rd_done": f"{name}_response&&!{name}_response_we",
+            "wr_done": f"{name}_response&&{name}_response_we",
+        }
+        for suffix, expression in expected_assignments.items():
+            assert _assigned_expression(content, f"{name}_{suffix}") == expression
+        assert (
+            f"if({name}_tag_push)begin{name}_tags[{name}_tag_wptr]<={name}_we;"
+            f"{name}_tag_wptr<={name}_tag_wptr+2'd1;"
+        ) in content
+        assert f"if({name}_tag_pop)begin{name}_tag_rptr<={name}_tag_rptr+2'd1;" in content
+        assert (
+            f"case({{{name}_tag_push,{name}_tag_pop}})"
+            f"2'b10:{name}_tag_count<={name}_tag_count+3'd1;"
+            f"2'b01:{name}_tag_count<={name}_tag_count-3'd1;"
+            f"default:{name}_tag_count<={name}_tag_count;endcase"
+        ) in content
+        for direction in ("rd", "wr"):
+            assert f"reg{name}_{direction}_ack;" in content
+            assert f"{name}_{direction}_ack<=1'b0;" in content
+            assert f"{name}_{direction}_ack<={name}_{direction}_done;" in content
+        assert f"reg[{mem['width'] - 1}:0]{name}_rd_data;" in content
+        assert f"{name}_rd_data<={mem['width']}'d0;" in content
+        assert f"if({name}_rd_done)begin{name}_rd_data<={name}_dout;" in content
+        assert (
+            f"if({name}_rd_ack)beginint_rd_data[{mem['width'] - 1}:0]="
+            f"int_rd_data[{mem['width'] - 1}:0]|{name}_rd_data;"
+        ) in content
+
+
+@pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])
+def test_convert_renders_memory_response_model(rdl_path):
+    top = _compile(rdl_path)
+    mems = _gather(top, MemGatheringListener).mems
+    rendered = convert(top, "tb_{{axi4l}}_regs.v.jinja2")
+    content = _compact_verilog(rendered)
+
+    # Indexed shifting also elaborates at depth one: no negative part-select.
+    assert "MEMORY_READ_LATENCY-2" not in content
+    assert "[-1:0]" not in content
+    assert "_rd_addr_pipe" not in content
+    if not mems:
+        assert "_response_valid_pipe" not in content
+        assert "_response_data_pipe" not in content
+
+    for mem in mems:
+        name = mem["name"]
+        valid_pipe = f"{name}_response_valid_pipe"
+        data_pipe = f"{name}_response_data_pipe"
+        index = f"{name}_response_idx"
+        assert f"wire[{mem['width'] - 1}:0]{name}_dout;" in content
+        assert f"wire{name}_valid;" in content
+        assert f"{name}_valid<=" not in content
+        assert f"{name}_dout<=" not in content
+        assert f"reg[MEMORY_READ_LATENCY-1:0]{valid_pipe};" in content
+        assert (
+            f"reg[{mem['width'] - 1}:0]{data_pipe}[0:MEMORY_READ_LATENCY-1];"
+        ) in content
+        # Every en, including writes, captures a read-before-write snapshot.
+        assert f"{valid_pipe}[0]<={name}_en;" in content
+        assert f"if({name}_en)begin{data_pipe}[0]<={name}_mem[{name}_addr];" in content
+        assert f"if(s_axi_aresetn==1'b0)begin{valid_pipe}<=0;" in content
+        assert f"{data_pipe}[{index}]<=0;" in content
+        assert (
+            f"for({index}=1;{index}<MEMORY_READ_LATENCY;{index}={index}+1)begin"
+            f"{valid_pipe}[{index}]<={valid_pipe}[{index}-1];"
+            f"{data_pipe}[{index}]<={data_pipe}[{index}-1];"
+        ) in content
+        assert _assigned_expression(content, f"{name}_valid") == (
+            f"s_axi_aresetn&&{valid_pipe}[MEMORY_READ_LATENCY-1]"
+        )
+        assert _assigned_expression(content, f"{name}_dout") == (
+            f"{name}_valid?{data_pipe}[MEMORY_READ_LATENCY-1]:"
+            f"{mem['width']}'hdeadbeef"
+        )
+        assert f"if(s_axi_aresetn&&{name}_en==1'b1&&{name}_we==1'b1)" in content
+        assert (
+            f"if({name}_be[{name}_be_idx])begin"
+            f"{name}_mem[{name}_addr][{name}_be_idx*8+:8]<="
+            f"{name}_din[{name}_be_idx*8+:8];"
+        ) in content
+        read_check = (
+            "readable access signal mismatch" if mem["is_sw_readable"]
+            else "prohibited read reached external memory"
+        )
+        write_check = (
+            "byte enable/write mismatch" if mem["is_sw_writable"]
+            else "prohibited write reached external memory"
+        )
+        assert f"{mem['hierarchy']} {read_check}" in rendered
+        assert f"{mem['hierarchy']} {write_check}" in rendered
+        if mem["is_sw_writable"]:
+            assert f"{mem['hierarchy']} WSTRB=0 issued a physical memory access" in rendered

@@ -1,6 +1,6 @@
 # RAM transaction handling implementation plan
 
-This is a handoff plan for the implementation agent. The planned RTL and test changes have not been implemented.
+The RTL and test changes below are implemented. Verification on 2026-09-28: 63 unit/simulator-support tests passed, and the complete Icarus and Verilator suites each passed all 104 tests after artifact regeneration.
 
 ## 1. Scope and interface contract
 
@@ -252,7 +252,7 @@ Change it to:
 - Poison inactive `dout`.
 - Flush pending responses on reset.
 
-For mixed same-address accesses, derive expectations from the observed physical issue order—not coroutine launch order.
+For mixed same-address accesses, use observed physical issue order only to establish ordering between read and write channels—not as the source of expected request contents. Match each physical request against independently queued AXI transactions, checking target, address, direction, write data, and byte strobes. Update separate reference storage using the expected transaction contents in that observed order, with read-before-write snapshots. Require every expected physical request to be observed exactly once; missing, duplicate, or unexpected requests must fail the test.
 
 ### Generated Verilog model
 
@@ -263,6 +263,7 @@ Update `src/bus_generator/templates/tb_{{axi4l}}_regs.v.jinja2:355` similarly:
 - Return valid for writes as well as reads.
 - Qualify memory writes with reset.
 - Preserve existing byte-enable and access-permission checks.
+- Handle pipeline depth one explicitly for one-cycle response coverage, or use a separate one-cycle HDL model. Setting `MEMORY_READ_LATENCY=1` in the current shift expression produces an invalid `[-1:0]` slice; do not rely on changing the constant alone.
 
 ### True zero-latency coverage
 
