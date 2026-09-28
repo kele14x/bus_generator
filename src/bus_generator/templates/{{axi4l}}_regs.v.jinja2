@@ -93,18 +93,18 @@ module {{ top_name }}_regs (
 
     reg  [             1:0] b_outstanding;
     reg  [             1:0] b_wait_ack;
-    reg  [             1:0] b_pending;
+    reg  [             1:0] b_fifo_count;
     reg  [             1:0] b_err_fifo;
+    wire                    b_fifo_idx;
     wire                    b_ack_fire;
     wire                    b_credit;
 
     reg  [             1:0] r_outstanding;
     reg  [             1:0] r_wait_ack;
-    reg  [             1:0] r_pending;
-    reg  [  DATA_WIDTH-1:0] r_data_slot0;
-    reg  [  DATA_WIDTH-1:0] r_data_slot1;
-    reg                     r_err_slot0;
-    reg                     r_err_slot1;
+    reg  [             1:0] r_fifo_count;
+    reg  [2*DATA_WIDTH-1:0] r_data_fifo;
+    reg  [             1:0] r_err_fifo;
+    wire                    r_fifo_idx;
     wire                    r_ack_fire;
     wire                    r_credit;
 
@@ -234,16 +234,23 @@ module {{ top_name }}_regs (
 
     assign b_ack_fire = int_wr_ack && (b_wait_ack != 2'd0);
     assign b_credit   = (b_outstanding != 2'd2) || (s_axi_bvalid && s_axi_bready);
+    assign b_fifo_idx = b_fifo_count[0] - 1'b1;
 
-    assign s_axi_bvalid = b_pending != 2'd0;
-    assign s_axi_bresp  = b_err_fifo[0] ? 2'b10 : 2'b00;
+    assign s_axi_bvalid = b_fifo_count != 2'd0;
+    assign s_axi_bresp  = b_err_fifo[b_fifo_idx] ? 2'b10 : 2'b00;
+
+    // Reset occupancy only: SRL storage has no reset port.
+    always @(posedge s_axi_aclk) begin
+        if (s_axi_aresetn && b_ack_fire) begin
+            b_err_fifo <= {b_err_fifo[0], int_wr_err};
+        end
+    end
 
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
             b_outstanding <= 2'd0;
             b_wait_ack    <= 2'd0;
-            b_pending     <= 2'd0;
-            b_err_fifo    <= 2'd0;
+            b_fifo_count  <= 2'd0;
         end else begin
             case ({int_wr_en, (s_axi_bvalid && s_axi_bready)})
                 2'b10:   b_outstanding <= b_outstanding + 2'd1;
@@ -258,21 +265,9 @@ module {{ top_name }}_regs (
             endcase
 
             case ({b_ack_fire, (s_axi_bvalid && s_axi_bready)})
-                2'b10: begin
-                    b_err_fifo[b_pending[0]] <= int_wr_err;
-                    b_pending <= b_pending + 2'd1;
-                end
-                2'b01: begin
-                    b_err_fifo[0] <= b_err_fifo[1];
-                    b_err_fifo[1] <= 1'b0;
-                    b_pending <= b_pending - 2'd1;
-                end
-                2'b11: begin
-                    b_err_fifo[0] <= b_err_fifo[1];
-                    b_err_fifo[b_pending[0] - 1'b1] <= int_wr_err;
-                    b_pending <= b_pending;
-                end
-                default: b_pending <= b_pending;
+                2'b10:   b_fifo_count <= b_fifo_count + 2'd1;
+                2'b01:   b_fifo_count <= b_fifo_count - 2'd1;
+                default: b_fifo_count <= b_fifo_count;
             endcase
         end
     end
@@ -284,20 +279,33 @@ module {{ top_name }}_regs (
 
     assign r_ack_fire = int_rd_ack && (r_wait_ack != 2'd0);
     assign r_credit   = (r_outstanding != 2'd2) || (s_axi_rvalid && s_axi_rready);
+    assign r_fifo_idx = r_fifo_count[0] - 1'b1;
 
-    assign s_axi_rvalid = r_pending != 2'd0;
-    assign s_axi_rdata  = r_data_slot0;
-    assign s_axi_rresp  = r_err_slot0 ? 2'b10 : 2'b00;
+    assign s_axi_rvalid = r_fifo_count != 2'd0;
+    assign s_axi_rresp  = r_err_fifo[r_fifo_idx] ? 2'b10 : 2'b00;
+
+    // Expose each bit's variable tap for SRL extraction.
+    genvar r_data_bit;
+    generate
+        for (r_data_bit = 0; r_data_bit < DATA_WIDTH; r_data_bit = r_data_bit + 1) begin : gen_r_data_fifo
+            wire [1:0] stages;
+            assign stages = {r_data_fifo[DATA_WIDTH+r_data_bit], r_data_fifo[r_data_bit]};
+            assign s_axi_rdata[r_data_bit] = stages[r_fifo_idx];
+        end
+    endgenerate
+
+    always @(posedge s_axi_aclk) begin
+        if (s_axi_aresetn && r_ack_fire) begin
+            r_data_fifo <= {r_data_fifo[DATA_WIDTH-1:0], int_rd_data};
+            r_err_fifo  <= {r_err_fifo[0], int_rd_err};
+        end
+    end
 
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
             r_outstanding <= 2'd0;
             r_wait_ack    <= 2'd0;
-            r_pending     <= 2'd0;
-            r_data_slot0  <= {DATA_WIDTH{1'b0}};
-            r_data_slot1  <= {DATA_WIDTH{1'b0}};
-            r_err_slot0   <= 1'b0;
-            r_err_slot1   <= 1'b0;
+            r_fifo_count  <= 2'd0;
         end else begin
             case ({int_rd_en, (s_axi_rvalid && s_axi_rready)})
                 2'b10:   r_outstanding <= r_outstanding + 2'd1;
@@ -312,35 +320,9 @@ module {{ top_name }}_regs (
             endcase
 
             case ({r_ack_fire, (s_axi_rvalid && s_axi_rready)})
-                2'b10: begin
-                    if (r_pending == 2'd0) begin
-                        r_data_slot0 <= int_rd_data;
-                        r_err_slot0  <= int_rd_err;
-                    end else begin
-                        r_data_slot1 <= int_rd_data;
-                        r_err_slot1  <= int_rd_err;
-                    end
-                    r_pending <= r_pending + 2'd1;
-                end
-                2'b01: begin
-                    if (r_pending == 2'd2) begin
-                        r_data_slot0 <= r_data_slot1;
-                        r_err_slot0  <= r_err_slot1;
-                    end
-                    r_pending <= r_pending - 2'd1;
-                end
-                2'b11: begin
-                    if (r_pending == 2'd1) begin
-                        r_data_slot0 <= int_rd_data;
-                        r_err_slot0  <= int_rd_err;
-                    end else begin
-                        r_data_slot0 <= r_data_slot1;
-                        r_err_slot0  <= r_err_slot1;
-                        r_data_slot1 <= int_rd_data;
-                        r_err_slot1  <= int_rd_err;
-                    end
-                end
-                default: r_pending <= r_pending;
+                2'b10:   r_fifo_count <= r_fifo_count + 2'd1;
+                2'b01:   r_fifo_count <= r_fifo_count - 2'd1;
+                default: r_fifo_count <= r_fifo_count;
             endcase
         end
     end
@@ -465,10 +447,9 @@ module {{ top_name }}_regs (
 
     // Memory {{ mem.hierarchy }} @'h{{ '{:x}'.format(mem.address) }}
 
-    reg  [ 3:0] {{ mem.name }}_tags;
-    reg  [ 1:0] {{ mem.name }}_tag_rptr;
-    reg  [ 1:0] {{ mem.name }}_tag_wptr;
-    reg  [ 2:0] {{ mem.name }}_tag_count;
+    reg  [ 3:0] {{ mem.name }}_tag_fifo;
+    reg  [ 2:0] {{ mem.name }}_tag_fifo_count;
+    wire [ 1:0] {{ mem.name }}_tag_fifo_idx;
     wire        {{ mem.name }}_tag_empty;
     wire        {{ mem.name }}_tag_bypass;
     wire        {{ mem.name }}_tag_push;
@@ -490,36 +471,33 @@ module {{ top_name }}_regs (
     assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
     assign {{ mem.name }}_be   = {{ mem.name }}_we ? int_wr_strb : {STRB_WIDTH{1'b0}};
 
-    assign {{ mem.name }}_tag_empty   = {{ mem.name }}_tag_count == 3'd0;
-    assign {{ mem.name }}_tag_bypass  = {{ mem.name }}_tag_empty && {{ mem.name }}_en && {{ mem.name }}_valid;
-    assign {{ mem.name }}_tag_push    = {{ mem.name }}_en && !{{ mem.name }}_tag_bypass;
-    assign {{ mem.name }}_tag_pop     = !{{ mem.name }}_tag_empty && {{ mem.name }}_valid;
+    assign {{ mem.name }}_tag_fifo_idx = {{ mem.name }}_tag_fifo_count[1:0] - 2'd1;
+    assign {{ mem.name }}_tag_empty    = {{ mem.name }}_tag_fifo_count == 3'd0;
+    assign {{ mem.name }}_tag_bypass   = {{ mem.name }}_tag_empty && {{ mem.name }}_en && {{ mem.name }}_valid;
+    assign {{ mem.name }}_tag_push     = {{ mem.name }}_en && !{{ mem.name }}_tag_bypass;
+    assign {{ mem.name }}_tag_pop      = !{{ mem.name }}_tag_empty && {{ mem.name }}_valid;
     assign {{ mem.name }}_response    = {{ mem.name }}_valid && (!{{ mem.name }}_tag_empty || {{ mem.name }}_en);
-    assign {{ mem.name }}_response_we = {{ mem.name }}_tag_empty ? {{ mem.name }}_we : {{ mem.name }}_tags[{{ mem.name }}_tag_rptr];
+    assign {{ mem.name }}_response_we = {{ mem.name }}_tag_empty ? {{ mem.name }}_we : {{ mem.name }}_tag_fifo[{{ mem.name }}_tag_fifo_idx];
     assign {{ mem.name }}_rd_done     = {{ mem.name }}_response && !{{ mem.name }}_response_we;
     assign {{ mem.name }}_wr_done     = {{ mem.name }}_response && {{ mem.name }}_response_we;
 
     always @(posedge s_axi_aclk) begin
+        if (s_axi_aresetn && {{ mem.name }}_tag_push) begin
+            {{ mem.name }}_tag_fifo <= { {{ mem.name }}_tag_fifo[2:0], {{ mem.name }}_we };
+        end
+    end
+
+    always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
-            {{ mem.name }}_tags      <= 4'd0;
-            {{ mem.name }}_tag_rptr  <= 2'd0;
-            {{ mem.name }}_tag_wptr  <= 2'd0;
-            {{ mem.name }}_tag_count <= 3'd0;
-            {{ mem.name }}_rd_ack    <= 1'b0;
-            {{ mem.name }}_wr_ack    <= 1'b0;
-            {{ mem.name }}_rd_data   <= {{ mem.width }}'d0;
+            {{ mem.name }}_tag_fifo_count <= 3'd0;
+            {{ mem.name }}_rd_ack         <= 1'b0;
+            {{ mem.name }}_wr_ack         <= 1'b0;
+            {{ mem.name }}_rd_data        <= {{ mem.width }}'d0;
         end else begin
-            if ({{ mem.name }}_tag_push) begin
-                {{ mem.name }}_tags[{{ mem.name }}_tag_wptr] <= {{ mem.name }}_we;
-                {{ mem.name }}_tag_wptr <= {{ mem.name }}_tag_wptr + 2'd1;
-            end
-            if ({{ mem.name }}_tag_pop) begin
-                {{ mem.name }}_tag_rptr <= {{ mem.name }}_tag_rptr + 2'd1;
-            end
             case ({ {{ mem.name }}_tag_push, {{ mem.name }}_tag_pop })
-                2'b10: {{ mem.name }}_tag_count <= {{ mem.name }}_tag_count + 3'd1;
-                2'b01: {{ mem.name }}_tag_count <= {{ mem.name }}_tag_count - 3'd1;
-                default: {{ mem.name }}_tag_count <= {{ mem.name }}_tag_count;
+                2'b10: {{ mem.name }}_tag_fifo_count <= {{ mem.name }}_tag_fifo_count + 3'd1;
+                2'b01: {{ mem.name }}_tag_fifo_count <= {{ mem.name }}_tag_fifo_count - 3'd1;
+                default: {{ mem.name }}_tag_fifo_count <= {{ mem.name }}_tag_fifo_count;
             endcase
 
             {{ mem.name }}_rd_ack <= {{ mem.name }}_rd_done;

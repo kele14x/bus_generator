@@ -785,13 +785,15 @@ def _monitor_widths(mems, address_width):
         "int_issue int_valid int_write arb_ready arb_read_priority ar_back_valid "
         "aw_back_valid w_back_valid arb_grant_read arb_grant_write b_credit r_credit int_idle "
         "int_rd_en int_wr_en int_rd_ack int_wr_ack int_rd_err "
-        "int_wr_err local_rd_ack local_wr_ack local_rd_err local_wr_err"
+        "int_wr_err local_rd_ack local_wr_ack local_rd_err local_wr_err "
+        "b_fifo_idx r_fifo_idx"
     ).split()}
     widths.update({name: 2 for name in (
-        "b_outstanding r_outstanding b_wait_ack r_wait_ack b_pending r_pending"
+        "b_outstanding r_outstanding b_wait_ack r_wait_ack b_fifo_count r_fifo_count "
+        "b_err_fifo r_err_fifo"
     ).split()})
     widths.update(int_addr=address_width, int_wr_data=32, int_wr_strb=4,
-                  int_rd_data=32, local_rd_data=32,
+                  int_rd_data=32, local_rd_data=32, r_data_fifo=2 * DATA_WIDTH,
                   int_target=len(mems) + 1, int_active_target=len(mems) + 1)
     for mem in mems:
         prefix = mem["name"] + "_"
@@ -799,9 +801,8 @@ def _monitor_widths(mems, address_width):
             "tag_empty tag_bypass tag_push tag_pop response response_we "
             "rd_done wr_done rd_ack wr_ack"
         ).split()})
-        widths.update({prefix + "tags": 4, prefix + "tag_rptr": 2,
-                       prefix + "tag_wptr": 2, prefix + "tag_count": 3,
-                       prefix + "rd_data": 32})
+        widths.update({prefix + "tag_fifo": 4, prefix + "tag_fifo_idx": 2,
+                       prefix + "tag_fifo_count": 3, prefix + "rd_data": 32})
     return widths
 
 
@@ -825,6 +826,7 @@ class RamContractBench:
         self.cover = Counter()
         self.transitions = set()
         self.tag_pairs = set()
+        self.tag_transitions = set()
         self.latencies = set()
         self.last_tag = {}
         self.last_target = None
@@ -844,7 +846,7 @@ class RamContractBench:
         self.inflight = {ch: deque() for ch in ("r", "w")}
         self.buffered = {ch: deque() for ch in ("r", "w")}
         self.tags = {mem["name"]: deque() for mem in self.mems}
-        self.pointers = {mem["name"]: [0, 0] for mem in self.mems}
+        self.drained_tags = set()
         self.next_acks = {}
         self.stalled = {}
         self.last_response_cycle = {}
@@ -861,11 +863,25 @@ class RamContractBench:
         return tx
 
     def _sample(self):
+        storage = {"b_err_fifo": ("b_fifo_count", 1),
+                   "r_err_fifo": ("r_fifo_count", 1),
+                   "r_data_fifo": ("r_fifo_count", DATA_WIDTH)}
+        storage.update({m["name"] + "_tag_fifo": (m["name"] + "_tag_fifo_count", 1)
+                        for m in self.mems})
         sample = {name: int(getattr(self.dut, "mon_" + name).value)
-                  for name in self.widths}
+                  for name in self.widths if name not in storage}
+        # Ignore unoccupied SRL bits, but fail on any X in an occupied entry.
+        for name, (count, width) in storage.items():
+            bits = sample[count] * width
+            assert 0 <= bits <= self.widths[name], f"invalid FIFO occupancy: {count}"
+            sample[name] = (int(str(getattr(self.dut, "mon_" + name).value)[-bits:], 2)
+                            if bits else 0)
         for suffix in ("awvalid awready wvalid wready arvalid arready "
-                       "bvalid bready bresp rvalid rready rresp rdata").split():
+                       "bvalid bready rvalid rready").split():
             sample["axi_" + suffix] = int(getattr(self.dut, "s_axi_" + suffix).value)
+        for suffix in ("bresp", "rresp", "rdata"):
+            sample["axi_" + suffix] = (int(getattr(self.dut, "s_axi_" + suffix).value)
+                                       if sample["axi_" + suffix[0] + "valid"] else 0)
         for mem in self.mems:
             for suffix in ("en", "we", "addr", "din", "be", "valid", "dout"):
                 name = mem["name"] + "_" + suffix
@@ -921,11 +937,12 @@ class RamContractBench:
             await self.step(reset=True)
         state = self._sample()
         for name in ("b_outstanding r_outstanding b_wait_ack r_wait_ack "
-                     "b_pending r_pending int_rd_ack int_wr_ack").split():
+                     "b_fifo_count r_fifo_count int_rd_ack int_wr_ack "
+                     "local_rd_ack local_wr_ack local_rd_data axi_bvalid axi_rvalid").split():
             assert state[name] == 0, f"reset did not clear {name}"
         for mem in self.mems:
             name = mem["name"]
-            for suffix in ("tag_count", "tag_rptr", "tag_wptr", "rd_ack", "wr_ack", "rd_data"):
+            for suffix in ("tag_fifo_count", "rd_ack", "wr_ack", "rd_data"):
                 assert state[name + "_" + suffix] == 0, f"reset did not clear {name}_{suffix}"
             if name in self.memories:
                 assert not self.memories[name].pending
@@ -978,8 +995,16 @@ class RamContractBench:
         for ch, prefix in (("w", "b"), ("r", "r")):
             wait, pending = len(self.inflight[ch]), len(self.buffered[ch])
             assert s[prefix + "_wait_ack"] == wait
-            assert s[prefix + "_pending"] == pending
+            assert s[prefix + "_fifo_count"] == pending
+            assert s[prefix + "_fifo_idx"] == ((pending - 1) & 1)
             assert s[prefix + "_outstanding"] == wait + pending <= 2
+            assert s["axi_" + prefix + "valid"] == bool(pending)
+            newest_first = list(reversed(self.buffered[ch]))
+            assert s[prefix + "_err_fifo"] == sum(
+                (tx["resp"] != 0) << slot for slot, tx in enumerate(newest_first))
+            if ch == "r":
+                assert s["r_data_fifo"] == sum(
+                    tx["result"] << (slot * DATA_WIDTH) for slot, tx in enumerate(newest_first))
 
         # Check KI02 at the arbitration boundary, not by bypassing a blocked head.
         read_waiting = s["ar_back_valid"] or s["axi_arvalid"]
@@ -1024,6 +1049,15 @@ class RamContractBench:
                 assert self.responses[ch][0] is tx, "AXI per-channel order violated"
                 expected = (tx["result"], tx["resp"]) if ch == "r" else (tx["resp"],)
                 assert payload == expected, f"{bus}: {payload} != {expected}; tx={tx}"
+                pushed = next((item for (_, channel), item in self.next_acks.items()
+                               if channel == ch), None)
+                if pushed is not None:
+                    assert len(self.buffered[ch]) == 1, "response push without credit"
+                    event = bus + ("_push_pop_one" if ready else "_push_stalled")
+                    self.cover[event] += 1
+                    self.cover[event + "_mixed"] += tx["resp"] != pushed["resp"]
+                    if ch == "r":
+                        self.cover[event + "_distinct"] += tx["result"] != pushed["result"]
                 if ready:
                     self.buffered[ch].popleft()
                     self.responses[ch].popleft()
@@ -1056,7 +1090,7 @@ class RamContractBench:
                 assert target_allowed and target == s["int_active_target"], "target switched with uncaptured completions"
             if self.last_target is not None and target != self.last_target:
                 self.transitions.add((self.last_target, target))
-                if s["b_pending"] or s["r_pending"]:
+                if s["b_fifo_count"] or s["r_fifo_count"]:
                     self.cover["buffered_switch"] += 1
             self.last_target = target
             tx.update(target=target, resp=2 if error else 0, result=0,
@@ -1102,12 +1136,11 @@ class RamContractBench:
             name = mem["name"]
             queue = self.tags[name]
             old_count = len(queue)
-            rp, wp = self.pointers[name]
-            assert s[name + "_tag_count"] == old_count <= 4
+            assert s[name + "_tag_fifo_count"] == old_count <= 4
             assert s[name + "_tag_empty"] == (old_count == 0)
-            assert (s[name + "_tag_rptr"], s[name + "_tag_wptr"]) == (rp, wp)
-            for offset, tx in enumerate(queue):
-                assert ((s[name + "_tags"] >> ((rp + offset) % 4)) & 1) == tx["write"]
+            assert s[name + "_tag_fifo_idx"] == ((old_count - 1) & 3)
+            assert s[name + "_tag_fifo"] == sum(
+                tx["write"] << slot for slot, tx in enumerate(reversed(queue)))
             req, valid = s[name + "_en"], s[name + "_valid"]
             bypass = not old_count and req and valid
             push, pop = req and not bypass, bool(old_count) and valid
@@ -1142,9 +1175,12 @@ class RamContractBench:
             self.cover["push_pop"] += bool(push and pop)
             if push and pop and tx["write"] != issued[1]["write"]:
                 self.cover["push_pop_different_tag"] += 1
-            self.cover["rptr_wrap"] += bool(pop and rp == 3)
-            self.cover["wptr_wrap"] += bool(push and wp == 3)
-            self.pointers[name] = [(rp + bool(pop)) % 4, (wp + bool(push)) % 4]
+            self.tag_transitions.add((old_count, len(queue)))
+            if push and not old_count and name in self.drained_tags:
+                self.cover["tag_reuse"] += 1
+            if pop and not queue:
+                self.cover["tag_drain"] += 1
+                self.drained_tags.add(name)
         self.next_acks = next_acks
 
 
@@ -1201,9 +1237,11 @@ async def ram_tag_fifo_delayed(dut):
         await bench.drain()
     assert bench.cover["four_before_response"] == 3 and bench.cover["max_tags"] == 4
     assert bench.tag_pairs == {(False, False), (False, True), (True, False), (True, True)}
-    for coverage in ("enqueue_empty", "push_pop", "rptr_wrap", "wptr_wrap",
+    for coverage in ("enqueue_empty", "push_pop", "tag_drain", "tag_reuse",
                      "stable_b", "stable_r", "consecutive_responses"):
         assert bench.cover[coverage], f"missing coverage: {coverage}"
+    assert {(0, 1), (1, 2), (2, 3), (3, 4),
+            (4, 3), (3, 2), (2, 1), (1, 0)} <= bench.tag_transitions
     assert len(bench.latencies) > 1 and max(bench.latencies) > 6
 
 
@@ -1324,6 +1362,78 @@ async def ram_credit_arbitration(dut):
     assert bench.cover["eligible_read"] and bench.cover["eligible_write"]
 
 
+@cocotb.test(timeout_time=100, timeout_unit="us")
+async def ram_response_fifo(dut):
+    bench = RamContractBench(dut, latency=(1, 1))
+    await bench.reset()
+    addr = _rw_memory(bench)["address"]
+    hole = _unmapped_address(bench)
+
+    async def capture(write, error, data=0x6B42D915):
+        tx = await bench.issue(write, hole if error else addr, data)
+        await bench.until(lambda: not bench.inflight["w" if write else "r"],
+                          "response FIFO capture")
+        return tx
+
+    for write, bus in ((False, "r"), (True, "b")):
+        ch = "w" if write else "r"
+        # Reverse OKAY/SLVERR order to expose both data and error tap mistakes.
+        for error_first in (False, True):
+            for simultaneous in (False, True):
+                bench.bready = bench.rready = False
+                first = await capture(write, error_first)
+                second = await bench.issue(write, addr if error_first else hole, 0xA5C317E9)
+                event = bus + ("_push_pop_one" if simultaneous else "_push_stalled")
+                before = bench.cover[event + "_mixed"]
+                if simultaneous:
+                    # Align READY with ACK capture to exercise simultaneous push/pop.
+                    await bench.until(lambda: any(channel == ch for _, channel in bench.next_acks),
+                                      "second response ACK before capture")
+                    assert len(bench.buffered[ch]) == 1
+                    bench.bready = bench.rready = True
+                    await bench.step()
+                    bench.bready = bench.rready = False
+                    assert list(bench.buffered[ch]) == [second]
+                else:
+                    await bench.until(lambda: len(bench.buffered[ch]) == 2,
+                                      "push into stalled response FIFO")
+                assert bench.cover[event + "_mixed"] == before + 1
+                if not write:
+                    assert first["result"] != second["result"]
+                for _ in range(4):
+                    await bench.step()
+                await bench.drain()
+
+    for bus in ("b", "r"):
+        for event in ("_push_stalled", "_push_pop_one"):
+            assert bench.cover[bus + event + "_mixed"] == 2
+            if bus == "r":
+                assert bench.cover[bus + event + "_distinct"] == 2
+
+    # Opposite errors and new data expose stale SRL contents after reset/refill.
+    for depth in (1, 2):
+        bench.bready = bench.rready = False
+        for write in (True, False):
+            for error in (False, True)[:depth]:
+                await capture(write, error, 0x12345678)
+        assert all(len(queue) == depth for queue in bench.buffered.values())
+        stale_data = bench.buffered["r"][0]["result"]
+        await bench.reset()
+        for _ in range(5):
+            await bench.step()
+        for write in (True, False):
+            for error in (True, False):
+                tx = await capture(write, error, 0xFEDCBA98 ^ depth)
+                if not write and not error:
+                    assert tx["result"] != stale_data
+        assert all(len(queue) == 2 for queue in bench.buffered.values())
+        for _ in range(4):
+            await bench.step()
+        await bench.drain()
+    assert bench.aborted == 6
+    assert bench.cover["stable_b"] and bench.cover["stable_r"]
+
+
 async def _latency_contract(dut, *, combinational):
     bench = RamContractBench(dut, latency=(1, 1), combinational=combinational)
     await bench.reset()
@@ -1351,7 +1461,8 @@ async def _latency_contract(dut, *, combinational):
         assert bench.cover["max_tags"] == 0
     else:
         assert bench.cover["enqueue_empty"] and not bench.cover["bypass"]
-        assert bench.cover["rptr_wrap"] and bench.cover["wptr_wrap"]
+        assert bench.cover["tag_drain"] and bench.cover["tag_reuse"]
+        assert {(0, 1), (1, 0)} <= bench.tag_transitions
 
 
 @cocotb.test(timeout_time=100, timeout_unit="us")
@@ -1458,7 +1569,7 @@ def test_memory_read_timing(testcase):
 @pytest.mark.parametrize("top", ["ram", "mem_access"])
 @pytest.mark.parametrize("testcase", [
     "ram_tag_fifo_delayed", "ram_block_switching", "ram_reset_outstanding",
-    "ram_credit_arbitration", "ram_latency_zero", "ram_latency_one",
+    "ram_credit_arbitration", "ram_response_fifo", "ram_latency_zero", "ram_latency_one",
 ])
 def test_ram_contract(top, testcase):
     _run_cocotb_test(top, testcase)

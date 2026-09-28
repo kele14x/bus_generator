@@ -485,7 +485,7 @@ def test_convert_renders_response_targets(rdl_path):
     )
     if not mems:
         assert "int_target[TARGET_COUNT-1:1]" not in content
-        assert "_tags" not in content
+        assert "_tag_fifo" not in content
     assert "[-1:0]" not in content
 
     for mem in mems:
@@ -522,6 +522,45 @@ def test_convert_renders_arbitration(rdl_path):
     }
     for signal, expression in expected_assignments.items():
         assert _assigned_expression(content, signal) == expression
+
+
+@pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])
+def test_convert_renders_shift_on_push_response_fifos(rdl_path):
+    content = _compact_verilog(convert(_compile(rdl_path), "{{axi4l}}_regs.v.jinja2"))
+    assert "reg[2*DATA_WIDTH-1:0]r_data_fifo;" in content
+    assert "for(r_data_bit=0;r_data_bit<DATA_WIDTH;r_data_bit=r_data_bit+1)" in content
+    assert _assigned_expression(content, "stages") == (
+        "{r_data_fifo[DATA_WIDTH+r_data_bit],r_data_fifo[r_data_bit]}"
+    )
+    assert _assigned_expression(content, "s_axi_rdata[r_data_bit]") == "stages[r_fifo_idx]"
+    for channel in ("b", "r"):
+        count = f"{channel}_fifo_count"
+        assert f"reg[1:0]{count};" in content
+        assert f"reg[1:0]{channel}_err_fifo;" in content
+        assert f"wire{channel}_fifo_idx;" in content
+        assert f"{count}<=2'd0;" in content
+        assert _assigned_expression(content, f"{channel}_fifo_idx") == f"{count}[0]-1'b1"
+        assert _assigned_expression(content, f"s_axi_{channel}valid") == f"{count}!=2'd0"
+        assert _assigned_expression(content, f"s_axi_{channel}resp") == (
+            f"{channel}_err_fifo[{channel}_fifo_idx]?2'b10:2'b00"
+        )
+        assert (
+            f"case({{{channel}_ack_fire,(s_axi_{channel}valid&&s_axi_{channel}ready)}})"
+            f"2'b10:{count}<={count}+2'd1;"
+            f"2'b01:{count}<={count}-2'd1;"
+            f"default:{count}<={count};endcase"
+        ) in content
+        direction = "wr" if channel == "b" else "rd"
+        updates = {f"{channel}_err_fifo": f"{{{channel}_err_fifo[0],int_{direction}_err}}"}
+        if channel == "r":
+            updates = {"r_data_fifo": "{r_data_fifo[DATA_WIDTH-1:0],int_rd_data}", **updates}
+        assert (
+            f"always@(posedges_axi_aclk)beginif(s_axi_aresetn&&{channel}_ack_fire)begin"
+            + "".join(f"{name}<={value};" for name, value in updates.items())
+            + "endend"
+        ) in content
+        for name, value in updates.items():
+            assert re.findall(rf"{name}(?:\[[^]]+\])?<=([^;]+);", content) == [value]
 
 
 @pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])
@@ -569,34 +608,37 @@ def test_convert_renders_registered_response_sources(rdl_path):
 
     for index, mem in enumerate(mems, 1):
         name = mem["name"]
-        for suffix, width in (("tags", 4), ("tag_rptr", 2), ("tag_wptr", 2), ("tag_count", 3)):
-            assert f"reg[{width - 1}:0]{name}_{suffix};" in content
-            assert f"{name}_{suffix}<={width}'d0;" in content
+        assert f"reg[3:0]{name}_tag_fifo;" in content
+        assert f"reg[2:0]{name}_tag_fifo_count;" in content
+        assert f"wire[1:0]{name}_tag_fifo_idx;" in content
+        assert f"{name}_tag_fifo_count<=3'd0;" in content
         expected_assignments = {
             "en": f"int_issue&&int_target[{index}]",
             "we": f"{name}_en&&int_write",
             "be": f"{name}_we?int_wr_strb:{{STRB_WIDTH{{1'b0}}}}",
-            "tag_empty": f"{name}_tag_count==3'd0",
+            "tag_fifo_idx": f"{name}_tag_fifo_count[1:0]-2'd1",
+            "tag_empty": f"{name}_tag_fifo_count==3'd0",
             "tag_bypass": f"{name}_tag_empty&&{name}_en&&{name}_valid",
             "tag_push": f"{name}_en&&!{name}_tag_bypass",
             "tag_pop": f"!{name}_tag_empty&&{name}_valid",
             "response": f"{name}_valid&&(!{name}_tag_empty||{name}_en)",
-            "response_we": f"{name}_tag_empty?{name}_we:{name}_tags[{name}_tag_rptr]",
+            "response_we": f"{name}_tag_empty?{name}_we:{name}_tag_fifo[{name}_tag_fifo_idx]",
             "rd_done": f"{name}_response&&!{name}_response_we",
             "wr_done": f"{name}_response&&{name}_response_we",
         }
         for suffix, expression in expected_assignments.items():
             assert _assigned_expression(content, f"{name}_{suffix}") == expression
+        update = f"{{{name}_tag_fifo[2:0],{name}_we}}"
         assert (
-            f"if({name}_tag_push)begin{name}_tags[{name}_tag_wptr]<={name}_we;"
-            f"{name}_tag_wptr<={name}_tag_wptr+2'd1;"
+            f"always@(posedges_axi_aclk)beginif(s_axi_aresetn&&{name}_tag_push)begin"
+            f"{name}_tag_fifo<={update};endend"
         ) in content
-        assert f"if({name}_tag_pop)begin{name}_tag_rptr<={name}_tag_rptr+2'd1;" in content
+        assert re.findall(rf"{name}_tag_fifo(?:\[[^]]+\])?<=([^;]+);", content) == [update]
         assert (
             f"case({{{name}_tag_push,{name}_tag_pop}})"
-            f"2'b10:{name}_tag_count<={name}_tag_count+3'd1;"
-            f"2'b01:{name}_tag_count<={name}_tag_count-3'd1;"
-            f"default:{name}_tag_count<={name}_tag_count;endcase"
+            f"2'b10:{name}_tag_fifo_count<={name}_tag_fifo_count+3'd1;"
+            f"2'b01:{name}_tag_fifo_count<={name}_tag_fifo_count-3'd1;"
+            f"default:{name}_tag_fifo_count<={name}_tag_fifo_count;endcase"
         ) in content
         for direction in ("rd", "wr"):
             assert f"reg{name}_{direction}_ack;" in content
