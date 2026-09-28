@@ -67,105 +67,113 @@ module {{ top_name }}_regs (
     localparam integer STRB_WIDTH = DATA_WIDTH / 8;
     localparam integer TARGET_COUNT = {{ mems | length + 1 }};
 
-    reg  [ADDR_WIDTH-1:0] int_addr;
-    reg  [DATA_WIDTH-1:0] int_wr_data;
-    reg  [STRB_WIDTH-1:0] int_wr_strb;
-    wire                  int_wr_en;
-    wire                  int_rd_en;
-    wire                  int_wr_ack;
-    wire                  int_wr_err;
-    wire                  int_wr_err_next;
-    wire                  int_rd_ack;
-    wire                  int_rd_err;
-    wire                  int_rd_err_next;
-    reg  [DATA_WIDTH-1:0] int_rd_data;
 
-    reg                   head_valid;
-    reg                   head_write;
+    //--------------------------------------------------------------------------
+    // Internal bus and response state
+    //--------------------------------------------------------------------------
+
+    reg                     int_valid;
+    reg                     int_write;
+    reg  [  ADDR_WIDTH-1:0] int_addr;
+    wire                    int_issue;
+    wire                    int_idle;
+    wire [TARGET_COUNT-1:0] int_target;
+    reg  [TARGET_COUNT-1:0] int_active_target;
+
+    wire                    int_wr_en;
+    reg  [  DATA_WIDTH-1:0] int_wr_data;
+    reg  [  STRB_WIDTH-1:0] int_wr_strb;
+    wire                    int_wr_ack;
+    wire                    int_wr_err;
+
+    wire                    int_rd_en;
+    reg  [  DATA_WIDTH-1:0] int_rd_data;
+    wire                    int_rd_ack;
+    wire                    int_rd_err;
+
+    reg  [             1:0] b_outstanding;
+    reg  [             1:0] b_wait_ack;
+    reg  [             1:0] b_pending;
+    reg  [             1:0] b_err_fifo;
+    wire                    b_ack_fire;
+    wire                    b_credit;
+
+    reg  [             1:0] r_outstanding;
+    reg  [             1:0] r_wait_ack;
+    reg  [             1:0] r_pending;
+    reg  [  DATA_WIDTH-1:0] r_data_slot0;
+    reg  [  DATA_WIDTH-1:0] r_data_slot1;
+    reg                     r_err_slot0;
+    reg                     r_err_slot1;
+    wire                    r_ack_fire;
+    wire                    r_credit;
+
+    // Empty tags do not imply idle: registered ACKs may still await capture.
+    assign int_idle  = (b_wait_ack == 2'd0) && (r_wait_ack == 2'd0);
+    assign int_issue = int_valid && (int_idle || (int_target == int_active_target)) &&
+                       (int_write ? b_credit : r_credit);
+    assign int_wr_en = int_issue && int_write;
+    assign int_rd_en = int_issue && !int_write;
+
+    always @(posedge s_axi_aclk) begin
+        if (!s_axi_aresetn) begin
+            int_active_target <= {{ mems | length + 1 }}'d1;
+        end else if (int_issue && int_idle) begin
+            int_active_target <= int_target;
+        end
+    end
+
+
+    //--------------------------------------------------------------------------
+    // Request buffers and arbitration
+    //--------------------------------------------------------------------------
+
     reg                   ar_back_valid;
     reg  [ADDR_WIDTH-1:0] ar_back_addr;
+    wire                  ar_load_back;
+    wire                  ar_load_direct;
+
     reg                   aw_back_valid;
     reg  [ADDR_WIDTH-1:0] aw_back_addr;
+
     reg                   w_back_valid;
     reg  [DATA_WIDTH-1:0] w_back_data;
     reg  [STRB_WIDTH-1:0] w_back_strb;
-    reg                   priority_read;
 
-    wire                  issue;
-    wire                  head_available;
-    wire                  read_waiting;
-    wire                  write_waiting;
-    wire                  grant_read;
-    wire                  grant_write;
-    wire                  load_read_back;
-    wire                  load_read_direct;
+    reg                   arb_read_priority;
+    wire                  arb_ready;
+    wire                  arb_read_eligible;
+    wire                  arb_write_eligible;
+    wire                  arb_grant_read;
+    wire                  arb_grant_write;
 
-    reg  [           1:0] b_outstanding;
-    reg  [           1:0] r_outstanding;
-    reg  [           1:0] b_wait_ack;
-    reg  [           1:0] r_wait_ack;
-    reg  [           1:0] b_pending;
-    reg  [           1:0] r_pending;
-    reg  [           1:0] b_err_fifo;
-    reg  [DATA_WIDTH-1:0] r_slot0;
-    reg  [DATA_WIDTH-1:0] r_slot1;
-    reg                   r_err_slot0;
-    reg                   r_err_slot1;
+    assign arb_ready          = !int_valid || int_issue;
+    assign arb_read_eligible  = (ar_back_valid || s_axi_arvalid) && r_credit;
+    assign arb_write_eligible = aw_back_valid && w_back_valid && b_credit;
+    assign arb_grant_read     = arb_ready && arb_read_eligible && (!arb_write_eligible || arb_read_priority);
+    assign arb_grant_write    = arb_ready && arb_write_eligible && (!arb_read_eligible || !arb_read_priority);
 
-    wire                  wr_ack_fire;
-    wire                  rd_ack_fire;
-    wire                  b_credit;
-    wire                  r_credit;
+    assign ar_load_back   = arb_grant_read && ar_back_valid;
+    assign ar_load_direct = arb_grant_read && !ar_back_valid && s_axi_arvalid;
 
-    wire [TARGET_COUNT-1:0] head_target;
-    reg  [TARGET_COUNT-1:0] active_target;
-    wire                   internal_idle;
-    wire                   target_allowed;
-    wire                   read_eligible;
-    wire                   write_eligible;
-
-    // Empty tags do not imply idle: registered ACKs may still await capture.
-    assign internal_idle    = (b_wait_ack == 2'd0) && (r_wait_ack == 2'd0);
-    assign target_allowed   = internal_idle || (head_target == active_target);
-    assign issue            = head_valid && target_allowed && (head_write ? b_credit : r_credit);
-    assign int_wr_en        = issue && head_write;
-    assign int_rd_en        = issue && !head_write;
-    assign head_available   = !head_valid || issue;
-    assign read_waiting     = ar_back_valid || s_axi_arvalid;
-    assign write_waiting    = aw_back_valid && w_back_valid;
-    assign read_eligible    = read_waiting && r_credit;
-    assign write_eligible   = write_waiting && b_credit;
-    assign grant_read       = head_available && read_eligible && (!write_eligible || priority_read);
-    assign grant_write      = head_available && write_eligible && (!read_eligible || !priority_read);
-    assign load_read_back   = grant_read && ar_back_valid;
-    assign load_read_direct = grant_read && !ar_back_valid && s_axi_arvalid;
-
-    assign s_axi_arready = !ar_back_valid || load_read_back;
-    assign s_axi_awready = !aw_back_valid || grant_write;
-    assign s_axi_wready  = !w_back_valid || grant_write;
+    assign s_axi_arready = !ar_back_valid || ar_load_back;
+    assign s_axi_awready = !aw_back_valid || arb_grant_write;
+    assign s_axi_wready  = !w_back_valid || arb_grant_write;
 
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
-            active_target <= {{ mems | length + 1 }}'d1;
-        end else if (issue && internal_idle) begin
-            active_target <= head_target;
+            arb_read_priority <= 1'b1;
+        end else if (arb_grant_read) begin
+            arb_read_priority <= 1'b0;
+        end else if (arb_grant_write) begin
+            arb_read_priority <= 1'b1;
         end
     end
 
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
-            priority_read <= 1'b1;
-        end else if (grant_read) begin
-            priority_read <= 1'b0;
-        end else if (grant_write) begin
-            priority_read <= 1'b1;
-        end
-    end
-
-    always @(posedge s_axi_aclk) begin
-        if (!s_axi_aresetn) begin
-            head_valid    <= 1'b0;
-            head_write    <= 1'b0;
+            int_valid     <= 1'b0;
+            int_write     <= 1'b0;
             int_addr      <= {ADDR_WIDTH{1'b0}};
             int_wr_data   <= {DATA_WIDTH{1'b0}};
             int_wr_strb   <= {STRB_WIDTH{1'b0}};
@@ -177,35 +185,35 @@ module {{ top_name }}_regs (
             w_back_data   <= {DATA_WIDTH{1'b0}};
             w_back_strb   <= {STRB_WIDTH{1'b0}};
         end else begin
-            if (load_read_back) begin
-                head_valid  <= 1'b1;
-                head_write  <= 1'b0;
+            if (ar_load_back) begin
+                int_valid   <= 1'b1;
+                int_write   <= 1'b0;
                 int_addr    <= ar_back_addr;
-            end else if (load_read_direct) begin
-                head_valid  <= 1'b1;
-                head_write  <= 1'b0;
+            end else if (ar_load_direct) begin
+                int_valid   <= 1'b1;
+                int_write   <= 1'b0;
                 int_addr    <= s_axi_araddr;
-            end else if (grant_write) begin
-                head_valid  <= 1'b1;
-                head_write  <= 1'b1;
+            end else if (arb_grant_write) begin
+                int_valid   <= 1'b1;
+                int_write   <= 1'b1;
                 int_addr    <= aw_back_addr;
                 int_wr_data <= w_back_data;
                 int_wr_strb <= w_back_strb;
-            end else if (issue) begin
-                head_valid <= 1'b0;
+            end else if (int_issue) begin
+                int_valid <= 1'b0;
             end
 
-            if (s_axi_arvalid && s_axi_arready && !load_read_direct) begin
+            if (s_axi_arvalid && s_axi_arready && !ar_load_direct) begin
                 ar_back_valid <= 1'b1;
                 ar_back_addr  <= s_axi_araddr;
-            end else if (load_read_back) begin
+            end else if (ar_load_back) begin
                 ar_back_valid <= 1'b0;
             end
 
             if (s_axi_awvalid && s_axi_awready) begin
                 aw_back_valid <= 1'b1;
                 aw_back_addr  <= s_axi_awaddr;
-            end else if (grant_write) begin
+            end else if (arb_grant_write) begin
                 aw_back_valid <= 1'b0;
             end
 
@@ -213,36 +221,29 @@ module {{ top_name }}_regs (
                 w_back_valid <= 1'b1;
                 w_back_data  <= s_axi_wdata;
                 w_back_strb  <= s_axi_wstrb;
-            end else if (grant_write) begin
+            end else if (arb_grant_write) begin
                 w_back_valid <= 1'b0;
             end
         end
     end
 
-    assign wr_ack_fire = int_wr_ack && (b_wait_ack != 2'd0);
-    assign rd_ack_fire = int_rd_ack && (r_wait_ack != 2'd0);
-    assign b_credit    = (b_outstanding != 2'd2) || (s_axi_bvalid && s_axi_bready);
-    assign r_credit    = (r_outstanding != 2'd2) || (s_axi_rvalid && s_axi_rready);
+
+    //--------------------------------------------------------------------------
+    // Write responses
+    //--------------------------------------------------------------------------
+
+    assign b_ack_fire = int_wr_ack && (b_wait_ack != 2'd0);
+    assign b_credit   = (b_outstanding != 2'd2) || (s_axi_bvalid && s_axi_bready);
 
     assign s_axi_bvalid = b_pending != 2'd0;
     assign s_axi_bresp  = b_err_fifo[0] ? 2'b10 : 2'b00;
-    assign s_axi_rvalid = r_pending != 2'd0;
-    assign s_axi_rdata  = r_slot0;
-    assign s_axi_rresp  = r_err_slot0 ? 2'b10 : 2'b00;
 
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
             b_outstanding <= 2'd0;
-            r_outstanding <= 2'd0;
             b_wait_ack    <= 2'd0;
-            r_wait_ack    <= 2'd0;
             b_pending     <= 2'd0;
-            r_pending     <= 2'd0;
             b_err_fifo    <= 2'd0;
-            r_slot0       <= {DATA_WIDTH{1'b0}};
-            r_slot1       <= {DATA_WIDTH{1'b0}};
-            r_err_slot0   <= 1'b0;
-            r_err_slot1   <= 1'b0;
         end else begin
             case ({int_wr_en, (s_axi_bvalid && s_axi_bready)})
                 2'b10:   b_outstanding <= b_outstanding + 2'd1;
@@ -250,25 +251,13 @@ module {{ top_name }}_regs (
                 default: b_outstanding <= b_outstanding;
             endcase
 
-            case ({int_rd_en, (s_axi_rvalid && s_axi_rready)})
-                2'b10:   r_outstanding <= r_outstanding + 2'd1;
-                2'b01:   r_outstanding <= r_outstanding - 2'd1;
-                default: r_outstanding <= r_outstanding;
-            endcase
-
-            case ({int_wr_en, wr_ack_fire})
+            case ({int_wr_en, b_ack_fire})
                 2'b10:   b_wait_ack <= b_wait_ack + 2'd1;
                 2'b01:   b_wait_ack <= b_wait_ack - 2'd1;
                 default: b_wait_ack <= b_wait_ack;
             endcase
 
-            case ({int_rd_en, rd_ack_fire})
-                2'b10:   r_wait_ack <= r_wait_ack + 2'd1;
-                2'b01:   r_wait_ack <= r_wait_ack - 2'd1;
-                default: r_wait_ack <= r_wait_ack;
-            endcase
-
-            case ({wr_ack_fire, (s_axi_bvalid && s_axi_bready)})
+            case ({b_ack_fire, (s_axi_bvalid && s_axi_bready)})
                 2'b10: begin
                     b_err_fifo[b_pending[0]] <= int_wr_err;
                     b_pending <= b_pending + 2'd1;
@@ -285,34 +274,70 @@ module {{ top_name }}_regs (
                 end
                 default: b_pending <= b_pending;
             endcase
+        end
+    end
 
-            case ({rd_ack_fire, (s_axi_rvalid && s_axi_rready)})
+
+    //--------------------------------------------------------------------------
+    // Read responses
+    //--------------------------------------------------------------------------
+
+    assign r_ack_fire = int_rd_ack && (r_wait_ack != 2'd0);
+    assign r_credit   = (r_outstanding != 2'd2) || (s_axi_rvalid && s_axi_rready);
+
+    assign s_axi_rvalid = r_pending != 2'd0;
+    assign s_axi_rdata  = r_data_slot0;
+    assign s_axi_rresp  = r_err_slot0 ? 2'b10 : 2'b00;
+
+    always @(posedge s_axi_aclk) begin
+        if (!s_axi_aresetn) begin
+            r_outstanding <= 2'd0;
+            r_wait_ack    <= 2'd0;
+            r_pending     <= 2'd0;
+            r_data_slot0  <= {DATA_WIDTH{1'b0}};
+            r_data_slot1  <= {DATA_WIDTH{1'b0}};
+            r_err_slot0   <= 1'b0;
+            r_err_slot1   <= 1'b0;
+        end else begin
+            case ({int_rd_en, (s_axi_rvalid && s_axi_rready)})
+                2'b10:   r_outstanding <= r_outstanding + 2'd1;
+                2'b01:   r_outstanding <= r_outstanding - 2'd1;
+                default: r_outstanding <= r_outstanding;
+            endcase
+
+            case ({int_rd_en, r_ack_fire})
+                2'b10:   r_wait_ack <= r_wait_ack + 2'd1;
+                2'b01:   r_wait_ack <= r_wait_ack - 2'd1;
+                default: r_wait_ack <= r_wait_ack;
+            endcase
+
+            case ({r_ack_fire, (s_axi_rvalid && s_axi_rready)})
                 2'b10: begin
                     if (r_pending == 2'd0) begin
-                        r_slot0     <= int_rd_data;
-                        r_err_slot0 <= int_rd_err;
+                        r_data_slot0 <= int_rd_data;
+                        r_err_slot0  <= int_rd_err;
                     end else begin
-                        r_slot1     <= int_rd_data;
-                        r_err_slot1 <= int_rd_err;
+                        r_data_slot1 <= int_rd_data;
+                        r_err_slot1  <= int_rd_err;
                     end
                     r_pending <= r_pending + 2'd1;
                 end
                 2'b01: begin
                     if (r_pending == 2'd2) begin
-                        r_slot0     <= r_slot1;
-                        r_err_slot0 <= r_err_slot1;
+                        r_data_slot0 <= r_data_slot1;
+                        r_err_slot0  <= r_err_slot1;
                     end
                     r_pending <= r_pending - 2'd1;
                 end
                 2'b11: begin
                     if (r_pending == 2'd1) begin
-                        r_slot0     <= int_rd_data;
-                        r_err_slot0 <= int_rd_err;
+                        r_data_slot0 <= int_rd_data;
+                        r_err_slot0  <= int_rd_err;
                     end else begin
-                        r_slot0     <= r_slot1;
-                        r_err_slot0 <= r_err_slot1;
-                        r_slot1     <= int_rd_data;
-                        r_err_slot1 <= int_rd_err;
+                        r_data_slot0 <= r_data_slot1;
+                        r_err_slot0  <= r_err_slot1;
+                        r_data_slot1 <= int_rd_data;
+                        r_err_slot1  <= int_rd_err;
                     end
                 end
                 default: r_pending <= r_pending;
@@ -326,49 +351,41 @@ module {{ top_name }}_regs (
     //--------------------------------------------------------------------------
     {%- for field in fields %}
 
-    wire {{ field.name }}_strb;
+    wire {{ field.name }}_sel;
 
     {%- if addr_width > addr_width_lsb %}
-    assign {{ field.name }}_strb = (int_addr[{{ addr_width-1 }}:{{ addr_width_lsb }}] == 'h{{ '{:x}'.format(field.aligned_address) }});
+
+    assign {{ field.name }}_sel = (int_addr[{{ addr_width-1 }}:{{ addr_width_lsb }}] == 'h{{ '{:x}'.format(field.aligned_address) }});
     {%- else %}
-    assign {{ field.name }}_strb = (int_addr == {{ addr_width }}'h{{ '{:x}'.format(field.address) }});
+
+    assign {{ field.name }}_sel = (int_addr == {{ addr_width }}'h{{ '{:x}'.format(field.address) }});
     {%- endif %}
     {%- endfor %}
     {%- for mem in mems %}
 
-    wire {{ mem.name }}_strb;
+    wire {{ mem.name }}_sel;
 
     {%- if mem.address == 0 %}
-    assign {{ mem.name }}_strb = ({1'b0, int_addr} < {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address + mem.size) }});
+
+    assign {{ mem.name }}_sel = ({1'b0, int_addr} < {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address + mem.size) }});
     {%- else %}
-    assign {{ mem.name }}_strb = (({1'b0, int_addr} >= {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address) }}) && ({1'b0, int_addr} < {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address + mem.size) }}));
+
+    assign {{ mem.name }}_sel = (({1'b0, int_addr} >= {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address) }}) && ({1'b0, int_addr} < {{ addr_width + 1 }}'h{{ '{:x}'.format(mem.address + mem.size) }}));
     {%- endif %}
     {%- endfor %}
 
-    assign int_wr_err_next = !(1'b0
-        {%- for field in writable_fields %}
-        || {{ field.name }}_strb
-        {%- endfor %}
-        {%- for mem in writable_mems %}
-        || {{ mem.name }}_strb
-        {%- endfor %}
-    );
-    assign int_rd_err_next = !(1'b0
-        {%- for field in readable_fields %}
-        || {{ field.name }}_strb
-        {%- endfor %}
-        {%- for mem in readable_mems %}
-        || {{ mem.name }}_strb
-        {%- endfor %}
-    );
+    // Targets
 
     {%- for mem in mems %}
+
     wire {{ mem.name }}_target;
-    assign {{ mem.name }}_target = {{ mem.name }}_strb &&
-        ((head_write && {{ "1'b1" if mem.is_sw_writable else "1'b0" }} && (|int_wr_strb)) ||
-         (!head_write && {{ "1'b1" if mem.is_sw_readable else "1'b0" }}));
+
+    assign {{ mem.name }}_target = {{ mem.name }}_sel &&
+        ((int_write && {{ "1'b1" if mem.is_sw_writable else "1'b0" }} && (|int_wr_strb)) ||
+         (!int_write && {{ "1'b1" if mem.is_sw_readable else "1'b0" }}));
     {%- endfor %}
-    assign head_target = {
+
+    assign int_target = {
         {%- for mem in mems | reverse %}
         {{ mem.name }}_target,
         {%- endfor %}
@@ -395,6 +412,7 @@ module {{ top_name }}_regs (
     reg  [{{ field.width-1 }}:0] {{ field.name }}_value;
     {%- if field.implements_storage and field.is_sw_writable %}
     wire [{{ field.width-1 }}:0] {{ field.name }}_sw_mask;
+
     assign {{ field.name }}_sw_mask = sw_byte_mask[{{ field.msb }}:{{ field.lsb }}];
     {%- endif %}
     {%- if field.implements_storage %}
@@ -403,7 +421,7 @@ module {{ top_name }}_regs (
         if (!s_axi_aresetn) begin
             {{ field.name }}_value <= 'h{{ '{:x}'.format(field.reset) }};
         {%- if field.is_sw_writable %}
-        end else if (int_wr_en && {{ field.name }}_strb) begin
+        end else if (int_wr_en && {{ field.name }}_sel) begin
             {%- if field.is_hw_writable %}
             {{ field.name }}_value <= ({{ field.name }}_in & ~{{ field.name }}_sw_mask) | (int_wr_data[{{ field.msb }}:{{ field.lsb }}] & {{ field.name }}_sw_mask);
             {%- else %}
@@ -447,25 +465,28 @@ module {{ top_name }}_regs (
 
     // Memory {{ mem.hierarchy }} @'h{{ '{:x}'.format(mem.address) }}
 
-    reg  [3:0] {{ mem.name }}_tags;
-    reg  [1:0] {{ mem.name }}_tag_rptr;
-    reg  [1:0] {{ mem.name }}_tag_wptr;
-    reg  [2:0] {{ mem.name }}_tag_count;
-    wire       {{ mem.name }}_tag_empty;
-    wire       {{ mem.name }}_tag_bypass;
-    wire       {{ mem.name }}_tag_push;
-    wire       {{ mem.name }}_tag_pop;
-    wire       {{ mem.name }}_response;
-    wire       {{ mem.name }}_response_we;
-    wire       {{ mem.name }}_rd_done;
-    wire       {{ mem.name }}_wr_done;
-    reg        {{ mem.name }}_rd_ack;
-    reg        {{ mem.name }}_wr_ack;
-    reg  [{{ mem.width-1 }}:0] {{ mem.name }}_rd_data;
+    reg  [ 3:0] {{ mem.name }}_tags;
+    reg  [ 1:0] {{ mem.name }}_tag_rptr;
+    reg  [ 1:0] {{ mem.name }}_tag_wptr;
+    reg  [ 2:0] {{ mem.name }}_tag_count;
+    wire        {{ mem.name }}_tag_empty;
+    wire        {{ mem.name }}_tag_bypass;
+    wire        {{ mem.name }}_tag_push;
+    wire        {{ mem.name }}_tag_pop;
+
+    wire        {{ mem.name }}_response;
+    wire        {{ mem.name }}_response_we;
+
+    wire        {{ mem.name }}_rd_done;
+    reg         {{ mem.name }}_rd_ack;
+    reg  [{{ '{:2d}'.format(mem.width-1) }}:0] {{ mem.name }}_rd_data;
+
+    wire        {{ mem.name }}_wr_done;
+    reg         {{ mem.name }}_wr_ack;
 
     assign {{ mem.name }}_addr = int_addr[{{ mem.addr_msb }}:{{ mem.addr_lsb }}];
-    assign {{ mem.name }}_en   = issue && head_target[{{ loop.index }}];
-    assign {{ mem.name }}_we   = {{ mem.name }}_en && head_write;
+    assign {{ mem.name }}_en   = int_issue && int_target[{{ loop.index }}];
+    assign {{ mem.name }}_we   = {{ mem.name }}_en && int_write;
     assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];
     assign {{ mem.name }}_be   = {{ mem.name }}_we ? int_wr_strb : {STRB_WIDTH{1'b0}};
 
@@ -515,30 +536,52 @@ module {{ top_name }}_regs (
     // Local responses
     //--------------------------------------------------------------------------
 
-    wire                  local_rd_en;
     wire                  local_wr_en;
-    reg                   local_rd_ack;
     reg                   local_wr_ack;
-    reg                   local_rd_err;
     reg                   local_wr_err;
+    wire                  local_wr_err_next;
+
+    wire                  local_rd_en;
+    reg                   local_rd_ack;
+    reg                   local_rd_err;
+    wire                  local_rd_err_next;
     reg  [DATA_WIDTH-1:0] local_rd_data;
     {%- if readable_fields %}
-    reg  [DATA_WIDTH-1:0] field_rd_data_next;
+    reg  [DATA_WIDTH-1:0] local_rd_data_next;
     {%- else %}
-    wire [DATA_WIDTH-1:0] field_rd_data_next;
+    wire [DATA_WIDTH-1:0] local_rd_data_next;
 
-    assign field_rd_data_next = {DATA_WIDTH{1'b0}};
+    assign local_rd_data_next = {DATA_WIDTH{1'b0}};
     {%- endif %}
 
-    assign local_rd_en = int_rd_en && head_target[0];
-    assign local_wr_en = int_wr_en && head_target[0];
+    assign local_wr_en = int_wr_en && int_target[0];
+    assign local_rd_en = int_rd_en && int_target[0];
+
+    assign local_wr_err_next = !(1'b0
+        {%- for field in writable_fields %}
+        || {{ field.name }}_sel
+        {%- endfor %}
+        {%- for mem in writable_mems %}
+        || {{ mem.name }}_sel
+        {%- endfor %}
+    );
+
+    assign local_rd_err_next = !(1'b0
+        {%- for field in readable_fields %}
+        || {{ field.name }}_sel
+        {%- endfor %}
+        {%- for mem in readable_mems %}
+        || {{ mem.name }}_sel
+        {%- endfor %}
+    );
 
     {%- if readable_fields %}
+
     always @(*) begin
-        field_rd_data_next = {DATA_WIDTH{1'b0}};
+        local_rd_data_next = {DATA_WIDTH{1'b0}};
         {%- for field in readable_fields %}
-        if ({{ field.name }}_strb) begin
-            field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] = field_rd_data_next[{{ field.msb }}:{{ field.lsb }}] | {{ field.name }}_value;
+        if ({{ field.name }}_sel) begin
+            local_rd_data_next[{{ field.msb }}:{{ field.lsb }}] = local_rd_data_next[{{ field.msb }}:{{ field.lsb }}] | {{ field.name }}_value;
         end
         {%- endfor %}
     end
@@ -555,11 +598,11 @@ module {{ top_name }}_regs (
             local_rd_ack <= local_rd_en;
             local_wr_ack <= local_wr_en;
             if (local_rd_en) begin
-                local_rd_err  <= int_rd_err_next;
-                local_rd_data <= field_rd_data_next;
+                local_rd_err  <= local_rd_err_next;
+                local_rd_data <= local_rd_data_next;
             end
             if (local_wr_en) begin
-                local_wr_err <= int_wr_err_next;
+                local_wr_err <= local_wr_err_next;
             end
         end
     end

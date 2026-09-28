@@ -782,9 +782,9 @@ async def stress_mixed_overlap(dut):
 def _monitor_widths(mems, address_width):
     """Export checked internals through wrapper ports, even under Verilator."""
     widths = {name: 1 for name in (
-        "issue head_valid head_write head_available priority_read read_waiting "
-        "write_waiting grant_read grant_write b_credit r_credit internal_idle "
-        "target_allowed int_rd_en int_wr_en int_rd_ack int_wr_ack int_rd_err "
+        "int_issue int_valid int_write arb_ready arb_read_priority ar_back_valid "
+        "aw_back_valid w_back_valid arb_grant_read arb_grant_write b_credit r_credit int_idle "
+        "int_rd_en int_wr_en int_rd_ack int_wr_ack int_rd_err "
         "int_wr_err local_rd_ack local_wr_ack local_rd_err local_wr_err"
     ).split()}
     widths.update({name: 2 for name in (
@@ -792,7 +792,7 @@ def _monitor_widths(mems, address_width):
     ).split()})
     widths.update(int_addr=address_width, int_wr_data=32, int_wr_strb=4,
                   int_rd_data=32, local_rd_data=32,
-                  head_target=len(mems) + 1, active_target=len(mems) + 1)
+                  int_target=len(mems) + 1, int_active_target=len(mems) + 1)
     for mem in mems:
         prefix = mem["name"] + "_"
         widths.update({prefix + name: 1 for name in (
@@ -961,12 +961,20 @@ class RamContractBench:
 
     def _check_edge(self, s):
         old_wait = sum(len(q) for q in self.inflight.values())
-        assert s["internal_idle"] == (old_wait == 0)
+        active_targets = {tx["target"] for queue in self.inflight.values() for tx in queue}
+        assert s["int_idle"] == (old_wait == 0)
         if old_wait:
-            assert {tx["target"] for queue in self.inflight.values() for tx in queue} == {s["active_target"]}
-        assert s["target_allowed"] == (not old_wait or s["head_target"] == s["active_target"])
-        assert s["issue"] == bool(s["head_valid"] and s["target_allowed"]
-                                  and s["b_credit" if s["head_write"] else "r_credit"])
+            assert active_targets == {s["int_active_target"]}
+        # Derive the lock permission from submitted requests and uncaptured work.
+        target_allowed = not old_wait
+        if s["int_valid"]:
+            ch = "w" if s["int_write"] else "r"
+            assert self.expected[ch], "unexpected internal request"
+            request_target, _, _, _ = self._decode(self.expected[ch][0])
+            assert s["int_target"] == request_target
+            target_allowed = not old_wait or request_target in active_targets
+        assert s["int_issue"] == bool(s["int_valid"] and target_allowed
+                                      and s["b_credit" if s["int_write"] else "r_credit"])
         for ch, prefix in (("w", "b"), ("r", "r")):
             wait, pending = len(self.inflight[ch]), len(self.buffered[ch])
             assert s[prefix + "_wait_ack"] == wait
@@ -974,11 +982,13 @@ class RamContractBench:
             assert s[prefix + "_outstanding"] == wait + pending <= 2
 
         # Check KI02 at the arbitration boundary, not by bypassing a blocked head.
+        read_waiting = s["ar_back_valid"] or s["axi_arvalid"]
+        write_waiting = s["aw_back_valid"] and s["w_back_valid"]
         for preferred, other, bit in (("read", "write", 1), ("write", "read", 0)):
             pc, oc = ("r", "b") if preferred == "read" else ("b", "r")
-            if (s["head_available"] and s["read_waiting"] and s["write_waiting"]
-                    and s["priority_read"] == bit and not s[pc + "_credit"] and s[oc + "_credit"]):
-                assert s["grant_" + other] and not s["grant_" + preferred], "KI02 credit veto"
+            if (s["arb_ready"] and read_waiting and write_waiting
+                    and s["arb_read_priority"] == bit and not s[pc + "_credit"] and s[oc + "_credit"]):
+                assert s["arb_grant_" + other] and not s["arb_grant_" + preferred], "KI02 credit veto"
                 self.cover["eligible_" + other] += 1
 
         # ACKs must be exactly last edge's source completion, not merely onehot.
@@ -1026,13 +1036,13 @@ class RamContractBench:
             self.buffered[ch].append(tx)
             if source != "local" and not self.tags[source] and old_wait:
                 self.cover["empty_ack"] += 1
-                if s["head_valid"] and s["head_target"] != s["active_target"]:
-                    assert not s["issue"] and not s["target_allowed"], "lock released before ACK CAPTURE"
+                if s["int_valid"] and s["int_target"] != s["int_active_target"]:
+                    assert not s["int_issue"] and not target_allowed, "lock released before ACK CAPTURE"
                     self.cover["empty_ack_blocked"] += 1
         next_acks = {}
         issued = None
-        if s["issue"]:
-            ch = "w" if s["head_write"] else "r"
+        if s["int_issue"]:
+            ch = "w" if s["int_write"] else "r"
             assert self.expected[ch], "unexpected internal issue"
             tx = self.expected[ch].popleft()
             assert tx["accepted"] == ({"aw", "w"} if tx["write"] else {"ar"})
@@ -1041,9 +1051,9 @@ class RamContractBench:
             if tx["write"]:
                 assert (s["int_wr_data"], s["int_wr_strb"]) == (tx["data"], tx["strb"])
             target, mem, index, error = self._decode(tx)
-            assert s["head_target"] == target
+            assert s["int_target"] == target
             if old_wait:
-                assert target == s["active_target"], "target switched with uncaptured completions"
+                assert target_allowed and target == s["int_active_target"], "target switched with uncaptured completions"
             if self.last_target is not None and target != self.last_target:
                 self.transitions.add((self.last_target, target))
                 if s["b_pending"] or s["r_pending"]:

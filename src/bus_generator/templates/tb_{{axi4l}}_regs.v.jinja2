@@ -283,7 +283,7 @@ module tb_{{ top_name }}_regs;
         {%- if field.implements_storage and field.is_sw_writable and field.is_hw_writable and field.is_sw_readable %}
     // Check the one-cycle software override for {{ field.hierarchy }}.
     always @(posedge s_axi_aclk) begin
-        if (s_axi_aresetn && DUT.int_wr_en && DUT.{{ field.name }}_strb) begin
+        if (s_axi_aresetn && DUT.int_wr_en && DUT.{{ field.name }}_sel) begin
             #1;
             if (DUT.{{ field.name }}_value !==
                 (({{ field.name }}_in & ~DUT.{{ field.name }}_sw_mask) |
@@ -311,7 +311,7 @@ module tb_{{ top_name }}_regs;
             errors = errors + 1;
             $display("FAIL: {{ mem.hierarchy }} out-of-range address asserted external memory enable");
         end
-        if (s_axi_aresetn && DUT.int_rd_en && DUT.{{ mem.name }}_strb) begin
+        if (s_axi_aresetn && DUT.int_rd_en && DUT.{{ mem.name }}_sel) begin
             {%- if mem.is_sw_readable %}
             if (!{{ mem.name }}_en || {{ mem.name }}_we ||
                 ({{ mem.name }}_be !== { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} })) begin
@@ -326,7 +326,7 @@ module tb_{{ top_name }}_regs;
             end
             {%- endif %}
         end
-        if (s_axi_aresetn && DUT.int_wr_en && DUT.{{ mem.name }}_strb) begin
+        if (s_axi_aresetn && DUT.int_wr_en && DUT.{{ mem.name }}_sel) begin
             {%- if mem.is_sw_writable %}
             if (DUT.int_wr_strb == { {{ '{:2.0f}'.format(data_width/8) }}{1'b0} }) begin
                 if ({{ mem.name }}_en || {{ mem.name }}_we || (|{{ mem.name }}_be)) begin

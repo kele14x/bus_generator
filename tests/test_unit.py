@@ -451,32 +451,40 @@ def _assigned_expression(content, signal):
 @pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])
 def test_convert_renders_response_targets(rdl_path):
     top = _compile(rdl_path)
+    fields = _gather(top, FieldsGatheringListener).fields
     mems = _gather(top, MemGatheringListener).mems
     content = _compact_verilog(convert(top, "{{axi4l}}_regs.v.jinja2"))
 
+    for component in [*fields, *mems]:
+        name = component["name"]
+        assert f"wire{name}_sel;" in content
+        assert "int_addr" in _assigned_expression(content, f"{name}_sel")
+        assert f"{name}_strb" not in content
+    assert "reg[STRB_WIDTH-1:0]int_wr_strb;" in content
+    assert "w_back_strb<=s_axi_wstrb;" in content
+
     assert f"localparamintegerTARGET_COUNT={len(mems) + 1};" in content
-    assert "wire[TARGET_COUNT-1:0]head_target;" in content
-    assert "reg[TARGET_COUNT-1:0]active_target;" in content
-    assert _assigned_expression(content, "internal_idle") == (
+    assert "wire[TARGET_COUNT-1:0]int_target;" in content
+    assert "reg[TARGET_COUNT-1:0]int_active_target;" in content
+    assert _assigned_expression(content, "int_idle") == (
         "(b_wait_ack==2'd0)&&(r_wait_ack==2'd0)"
     )
-    assert _assigned_expression(content, "target_allowed") == (
-        "internal_idle||(head_target==active_target)"
+    assert _assigned_expression(content, "int_issue") == (
+        "int_valid&&(int_idle||(int_target==int_active_target))"
+        "&&(int_write?b_credit:r_credit)"
     )
-    assert _assigned_expression(content, "issue") == (
-        "head_valid&&target_allowed&&(head_write?b_credit:r_credit)"
-    )
-    assert "if(issue&&internal_idle)beginactive_target<=head_target;" in content
-    for obsolete in ("_rd_sel", "rd_mem_pending", "rd_mem_valid", "rd_mem_issue"):
+    assert "if(int_issue&&int_idle)beginint_active_target<=int_target;" in content
+    for obsolete in ("_rd_sel", "rd_mem_pending", "rd_mem_valid", "rd_mem_issue",
+                     "target_allowed", "read_waiting", "write_waiting"):
         assert obsolete not in content
 
     targets = [f"{mem['name']}_target" for mem in mems]
     local_target = "!(" + "||".join(["1'b0"] + targets) + ")"
-    assert _assigned_expression(content, "head_target") == (
+    assert _assigned_expression(content, "int_target") == (
         "{" + ",".join(list(reversed(targets)) + [local_target]) + "}"
     )
     if not mems:
-        assert "head_target[TARGET_COUNT-1:1]" not in content
+        assert "int_target[TARGET_COUNT-1:1]" not in content
         assert "_tags" not in content
     assert "[-1:0]" not in content
 
@@ -485,12 +493,35 @@ def test_convert_renders_response_targets(rdl_path):
         readable = int(mem["is_sw_readable"])
         # Decode before issue: zero-strobe/prohibited operations use LOCAL.
         assert _assigned_expression(content, f"{mem['name']}_target") == (
-            f"{mem['name']}_strb&&((head_write&&1'b{writable}&&(|int_wr_strb))"
-            f"||(!head_write&&1'b{readable}))"
+            f"{mem['name']}_sel&&((int_write&&1'b{writable}&&(|int_wr_strb))"
+            f"||(!int_write&&1'b{readable}))"
         )
         for direction, allowed in (("wr", writable), ("rd", readable)):
-            error_decode = _assigned_expression(content, f"int_{direction}_err_next")
-            assert (f"{mem['name']}_strb" in error_decode) == bool(allowed)
+            error_decode = _assigned_expression(content, f"local_{direction}_err_next")
+            assert (f"{mem['name']}_sel" in error_decode) == bool(allowed)
+
+
+@pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])
+def test_convert_renders_arbitration(rdl_path):
+    content = _compact_verilog(convert(_compile(rdl_path), "{{axi4l}}_regs.v.jinja2"))
+    expected_assignments = {
+        "arb_ready": "!int_valid||int_issue",
+        "arb_read_eligible": "(ar_back_valid||s_axi_arvalid)&&r_credit",
+        "arb_write_eligible": "aw_back_valid&&w_back_valid&&b_credit",
+        "arb_grant_read": (
+            "arb_ready&&arb_read_eligible&&(!arb_write_eligible||arb_read_priority)"
+        ),
+        "arb_grant_write": (
+            "arb_ready&&arb_write_eligible&&(!arb_read_eligible||!arb_read_priority)"
+        ),
+        "ar_load_back": "arb_grant_read&&ar_back_valid",
+        "ar_load_direct": "arb_grant_read&&!ar_back_valid&&s_axi_arvalid",
+        "s_axi_arready": "!ar_back_valid||ar_load_back",
+        "s_axi_awready": "!aw_back_valid||arb_grant_write",
+        "s_axi_wready": "!w_back_valid||arb_grant_write",
+    }
+    for signal, expression in expected_assignments.items():
+        assert _assigned_expression(content, signal) == expression
 
 
 @pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])
@@ -504,7 +535,7 @@ def test_convert_renders_registered_response_sources(rdl_path):
         assert f"reglocal_{direction}_ack;" in content
         assert f"reglocal_{direction}_err;" in content
         assert _assigned_expression(content, f"local_{direction}_en") == (
-            f"int_{direction}_en&&head_target[0]"
+            f"int_{direction}_en&&int_target[0]"
         )
         assert f"local_{direction}_ack<=local_{direction}_en;" in content
         assert f"local_{direction}_ack<=1'b0;" in content
@@ -521,11 +552,11 @@ def test_convert_renders_registered_response_sources(rdl_path):
     assert "reg[DATA_WIDTH-1:0]local_rd_data;" in content
     assert "local_rd_data<={DATA_WIDTH{1'b0}};" in content
     assert (
-        "if(local_rd_en)beginlocal_rd_err<=int_rd_err_next;"
-        "local_rd_data<=field_rd_data_next;"
+        "if(local_rd_en)beginlocal_rd_err<=local_rd_err_next;"
+        "local_rd_data<=local_rd_data_next;"
     ) in content
-    assert "if(local_wr_en)beginlocal_wr_err<=int_wr_err_next;" in content
-    assert "field_rd_data_next={DATA_WIDTH{1'b0}};" in content
+    assert "if(local_wr_en)beginlocal_wr_err<=local_wr_err_next;" in content
+    assert "local_rd_data_next={DATA_WIDTH{1'b0}};" in content
     assert "if(local_rd_ack)beginint_rd_data=local_rd_data;" in content
     assert "int_rd_data<=" not in content
     merge_terms = re.findall(r"int_rd_data(?:\[[^]]+\])?=([^;]+);", content)
@@ -533,8 +564,8 @@ def test_convert_renders_registered_response_sources(rdl_path):
     for term in merge_terms:
         assert "_dout" not in term
         assert "int_addr" not in term
-        assert "head_target" not in term
-        assert "active_target" not in term
+        assert "int_target" not in term
+        assert "int_active_target" not in term
 
     for index, mem in enumerate(mems, 1):
         name = mem["name"]
@@ -542,8 +573,8 @@ def test_convert_renders_registered_response_sources(rdl_path):
             assert f"reg[{width - 1}:0]{name}_{suffix};" in content
             assert f"{name}_{suffix}<={width}'d0;" in content
         expected_assignments = {
-            "en": f"issue&&head_target[{index}]",
-            "we": f"{name}_en&&head_write",
+            "en": f"int_issue&&int_target[{index}]",
+            "we": f"{name}_en&&int_write",
             "be": f"{name}_we?int_wr_strb:{{STRB_WIDTH{{1'b0}}}}",
             "tag_empty": f"{name}_tag_count==3'd0",
             "tag_bypass": f"{name}_tag_empty&&{name}_en&&{name}_valid",
