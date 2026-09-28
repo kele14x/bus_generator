@@ -11,19 +11,6 @@ Source references reflect the reorganized template; line numbers may change.
 
 ## RTL and generator
 
-### KI-06 [P1] SystemRDL side-effect semantics are unsupported
-
-- **Location:** `src/bus_generator/bus_generator.py:140-179` and `AGENTS.md:28-44`.
-- **Limitation:** Generated RTL does not implement `onread`, `onwrite`,
-  write-one-to-clear/set, read-clear, single-pulse, or write-once semantics.
-- **Current behavior:** Generation continues and warns for `onread`, `onwrite`,
-  `sw=rw1`, and `sw=w1`, including the affected component path. These warnings
-  do not cover every unsupported property; quiet mode suppresses them.
-- **Impact:** Successful generation does not mean the declared side effects are
-  implemented. Do not rely on them in generated hardware.
-- **Status:** Previously documented limitation; implementation is intentionally
-  deferred.
-
 ### KI-07 [P2] AXI interface inputs have combinational paths to outputs
 
 - **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:127-138`

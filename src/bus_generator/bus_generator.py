@@ -153,6 +153,9 @@ class UnsupportedSideEffectWarningListener(RDLListener):
         if onwrite is not None:
             ignored_semantics.append(f"onwrite={onwrite.name}")
 
+        if node.get_property("singlepulse"):
+            ignored_semantics.append("singlepulse=true")
+
         sw = node.get_property("sw")
         if sw in {AccessType.rw1, AccessType.w1}:
             ignored_semantics.append(f"sw={sw.name} (write-once)")
@@ -160,7 +163,7 @@ class UnsupportedSideEffectWarningListener(RDLListener):
         if ignored_semantics:
             logging.warning(
                 "Ignoring unsupported SystemRDL side-effect semantics on field "
-                "'%s': %s",
+                "'%s': %s; generation will continue without implementing these side effects.",
                 node.get_path(),
                 ", ".join(ignored_semantics),
             )
@@ -170,7 +173,8 @@ class UnsupportedSideEffectWarningListener(RDLListener):
         if sw in {AccessType.rw1, AccessType.w1}:
             logging.warning(
                 "Ignoring unsupported SystemRDL side-effect semantics on memory "
-                "'%s': sw=%s (write-once)",
+                "'%s': sw=%s (write-once); "
+                "generation will continue without implementing these side effects.",
                 node.get_path(),
                 sw.name,
             )

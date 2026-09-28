@@ -23,28 +23,17 @@ A CLI that generates a Verilog AXI4-Lite CSR register block (and C header, testb
 
 `bus_generator.__init__:main(argv=None)` is the console-script entry (see `[project.scripts]`); it forwards to `cli(argv)`. Tests import `from bus_generator import main` and call `main([...])`.
 
-## Known Issues
-
-### [HIGH] SystemRDL side-effect properties are not supported
-
-The implementation handles basic reset, software writes, and hardware inputs,
-but does not implement SystemRDL side-effect properties such as `onread`,
-`onwrite`, write-one-to-clear, write-one-to-set, read-clear, or single-pulse
-behavior. The write-once semantics of `sw=rw1` and `sw=w1` are also not
-enforced for fields or memories.
-
-Currently it:
-
-- Generation continues with the existing behavior, but emits `WARNING` messages
-  for fields or memories using unsupported `onread`, `onwrite`, `sw=rw1`, or
-  `sw=w1` semantics.
-- Warning messages include the elaborated component path and the ignored
-  property.
-- The side-effect semantics themselves remain unsupported and are intentionally
-  deferred; generated RTL must not be treated as implementing them.
-
 ## TODO
 
+- [P1] Support SystemRDL side-effect semantics (formerly KI-06), including
+  `onread`, `onwrite`, write-one-to-clear/set, read-clear, `singlepulse`, and
+  write-once access (`sw=rw1` and `sw=w1`) for fields and memories where applicable.
+  Add RTL implementation and regression tests for these behaviors. Until
+  implemented, generation continues with `WARNING` messages identifying the
+  affected component path and unsupported property (`onread`, `onwrite`,
+  `singlepulse`, `sw=rw1`, or `sw=w1`); quiet mode suppresses these warnings.
+  Successful generation does not mean side effects are implemented; do not rely
+  on them in generated hardware.
 - [P2] Support registers spanning multiple aligned 32-bit AXI words, including narrow
   registers that straddle a word boundary (e.g. 16 bits at `0x3`) and registers
   wider than 32 bits (e.g. `regwidth=64; accesswidth=32`). Preserve logical fields

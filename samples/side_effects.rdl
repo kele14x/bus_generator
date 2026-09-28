@@ -9,10 +9,14 @@ addrmap side_effects {
     } effects @0x0;
 
     reg {
-        field { sw = rw; } ordinary_rw[7:0];
+        field { sw = rw; singlepulse = false; } ordinary_rw[7:0];
         field { sw = r;  } ordinary_r[15:8];
         field { sw = w;  } ordinary_w[23:16];
     } ordinary @0x4;
+
+    reg {
+        field { sw = rw; singlepulse = true; reset = 0; } pulse[0:0];
+    } pulse_control @0x8;
 
     external mem {
         memwidth = 32;

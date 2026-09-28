@@ -563,7 +563,7 @@ def test_unsupported_side_effects_warn_with_field_path(caplog):
         warn_unsupported_side_effects(top)
 
     warnings = [record.getMessage() for record in caplog.records]
-    assert warnings == [
+    expected = [
         "Ignoring unsupported SystemRDL side-effect semantics on field "
         "'side_effects.effects.read_clear': onread=rclr",
         "Ignoring unsupported SystemRDL side-effect semantics on field "
@@ -572,9 +572,16 @@ def test_unsupported_side_effects_warn_with_field_path(caplog):
         "'side_effects.effects.write_once_rw': sw=rw1 (write-once)",
         "Ignoring unsupported SystemRDL side-effect semantics on field "
         "'side_effects.effects.write_once_w': sw=w1 (write-once)",
+        "Ignoring unsupported SystemRDL side-effect semantics on field "
+        "'side_effects.pulse_control.pulse': singlepulse=true",
         "Ignoring unsupported SystemRDL side-effect semantics on memory "
         "'side_effects.write_once_mem': sw=rw1 (write-once)",
     ]
+    assert warnings == [
+        message + "; generation will continue without implementing these side effects."
+        for message in expected
+    ]
+    assert all(record.levelname == "WARNING" for record in caplog.records)
 
 
 def test_ordinary_software_accesses_do_not_warn(caplog):
@@ -604,6 +611,10 @@ def test_cli_reports_side_effect_warnings_at_default_verbosity(
         SIDE_EFFECTS_RDL,
         "-o",
         str(tmp_path),
+        "-t",
+        "axi4l",
+        "c_header",
+        "tb_axi4l",
     ]
     if quiet:
         command.append("-q")
@@ -611,8 +622,13 @@ def test_cli_reports_side_effect_warnings_at_default_verbosity(
     result = subprocess.run(command, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0
-    assert (tmp_path / "side_effects_regs.v").is_file()
+    for filename in ("side_effects_regs.v", "side_effects.h", "tb_side_effects_regs.v"):
+        assert (tmp_path / filename).is_file()
     assert ("Ignoring unsupported SystemRDL side-effect semantics" in result.stderr) is expect_warnings
+    assert ("singlepulse=true" in result.stderr) is expect_warnings
+    assert (
+        "generation will continue without implementing these side effects." in result.stderr
+    ) is expect_warnings
 
 
 @pytest.fixture(
