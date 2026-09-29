@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate Verilog Control/Status RegisterNode (CSR) module from a SystemRDL
 source."""
 
@@ -11,7 +10,7 @@ import sys
 from math import ceil, log2
 
 from jinja2 import Environment, FileSystemLoader
-from systemrdl import RDLCompiler, RDLListener, RDLWalker
+from systemrdl.compiler import RDLCompiler
 from systemrdl.node import (
     AddressableNode,
     AddrmapNode,
@@ -23,7 +22,11 @@ from systemrdl.node import (
     SignalNode,
     VectorNode,
 )
-from systemrdl.rdltypes import AccessType
+from systemrdl.rdltypes.builtin_enums import AccessType
+from systemrdl.walker import RDLListener, RDLWalker
+
+logger = logging.getLogger(__name__)
+
 
 def _resolve_version() -> str:
     """Return the installed package version, if package metadata is available."""
@@ -119,7 +122,7 @@ class ModelPrintingListener(GeneralListener):
         print(f"regfile, size: {node.size}")
 
     def enter_Reg(self, node: RegNode):
-        print(f"reg")
+        print("reg")
 
     def enter_Mem(self, node: MemNode):
         print(f"mem, sw: {node.get_property('sw').name}, size: {node.size}")
@@ -136,7 +139,7 @@ class ModelPrintingListener(GeneralListener):
         )
 
     def enter_Signal(self, node: SignalNode):
-        print(f"signal")
+        print("signal")
 
 
 class UnsupportedSideEffectWarningListener(RDLListener):
@@ -161,7 +164,7 @@ class UnsupportedSideEffectWarningListener(RDLListener):
             ignored_semantics.append(f"sw={sw.name} (write-once)")
 
         if ignored_semantics:
-            logging.warning(
+            logger.warning(
                 "Ignoring unsupported SystemRDL side-effect semantics on field "
                 "'%s': %s; generation will continue without implementing these side effects.",
                 node.get_path(),
@@ -171,7 +174,7 @@ class UnsupportedSideEffectWarningListener(RDLListener):
     def enter_Mem(self, node: MemNode):
         sw = node.get_property("sw")
         if sw in {AccessType.rw1, AccessType.w1}:
-            logging.warning(
+            logger.warning(
                 "Ignoring unsupported SystemRDL side-effect semantics on memory "
                 "'%s': sw=%s (write-once); "
                 "generation will continue without implementing these side effects.",
@@ -191,7 +194,7 @@ def warn_memory_alignment(top: AddrmapNode):
             continue
         alignment = 1 << (node.size - 1).bit_length()
         if node.absolute_address % alignment:
-            logging.warning(
+            logger.warning(
                 "Memory '%s' at 0x%x is not aligned to its %d-byte address window; "
                 "consider aligning its base to a multiple of 0x%x so synthesis can "
                 "eliminate address subtraction.",
@@ -214,41 +217,39 @@ class DataWidthValidationListener(RDLListener):
         end_address = address + node.size - 1
         if (address >> ADDR_WIDTH_LSB) != (end_address >> ADDR_WIDTH_LSB):
             self.errors.append(
-                "Register '%s' at 0x%x with regwidth %d occupies bytes "
-                "0x%x-0x%x across a %d-bit AXI word boundary; multiword "
-                "registers are not supported."
-                % (node.get_path(), address, node.get_property("regwidth"),
-                   address, end_address, DATA_WIDTH)
+                f"Register '{node.get_path()}' at 0x{address:x} with regwidth "
+                f"{node.get_property('regwidth')} occupies bytes "
+                f"0x{address:x}-0x{end_address:x} across a {DATA_WIDTH}-bit "
+                "AXI word boundary; multiword registers are not supported."
             )
 
     def enter_Field(self, node: FieldNode):
         width = node.high - node.low + 1
         if width > DATA_WIDTH:
             self.errors.append(
-                "Field '%s' is %d bits wide ([%d:%d]); it exceeds the fixed "
-                "%d-bit DATA_WIDTH."
-                % (node.get_path(), width, node.high, node.low, DATA_WIDTH)
+                f"Field '{node.get_path()}' is {width} bits wide "
+                f"([{node.high}:{node.low}]); it exceeds the fixed "
+                f"{DATA_WIDTH}-bit DATA_WIDTH."
             )
         elif node.high >= DATA_WIDTH:
             self.errors.append(
-                "Field '%s' uses bits [%d:%d], which do not fit the fixed "
-                "%d-bit DATA_WIDTH."
-                % (node.get_path(), node.high, node.low, DATA_WIDTH)
+                f"Field '{node.get_path()}' uses bits [{node.high}:{node.low}], "
+                f"which do not fit the fixed {DATA_WIDTH}-bit DATA_WIDTH."
             )
 
     def enter_Mem(self, node: MemNode):
         width = node.get_property("memwidth")
         if width != DATA_WIDTH:
             self.errors.append(
-                "Memory '%s' has memwidth %d; only %d-bit memories are supported."
-                % (node.get_path(), width, DATA_WIDTH)
+                f"Memory '{node.get_path()}' has memwidth {width}; "
+                f"only {DATA_WIDTH}-bit memories are supported."
             )
         alignment = 1 << ADDR_WIDTH_LSB
         if node.absolute_address % alignment:
             self.errors.append(
-                "Memory '%s' at 0x%x is not aligned to a %d-bit AXI word; "
-                "memory base addresses must be multiples of %d bytes."
-                % (node.get_path(), node.absolute_address, DATA_WIDTH, alignment)
+                f"Memory '{node.get_path()}' at 0x{node.absolute_address:x} "
+                f"is not aligned to a {DATA_WIDTH}-bit AXI word; "
+                f"memory base addresses must be multiples of {alignment} bytes."
             )
 
 
@@ -454,20 +455,20 @@ def convert(top: AddrmapNode, template_name: str):
 def write_file(output_dir, content, name):
     output_dir = os.path.abspath(output_dir)
     if os.path.isdir(output_dir):
-        logging.info(f'Folder "{output_dir}" already exists.')
+        logger.info(f'Folder "{output_dir}" already exists.')
     elif os.path.exists(output_dir):
-        logging.error(f'File "{output_dir} already exists but is not a folder, abort.')
+        logger.error(f'File "{output_dir} already exists but is not a folder, abort.')
         sys.exit(2)
     else:
-        logging.info(f'Create folder "{output_dir}".')
+        logger.info(f'Create folder "{output_dir}".')
         os.makedirs(output_dir, exist_ok=True)
 
     target_file = os.path.join(output_dir, name)
 
     if os.path.isfile(target_file):
-        logging.info(f'File "{target_file}" already exists, it will be overwrite.')
+        logger.info(f'File "{target_file}" already exists, it will be overwrite.')
     elif os.path.exists(target_file):
-        logging.error(
+        logger.error(
             f'File "{target_file}" already exists but is not a regular file, abort.'
         )
         sys.exit(2)
@@ -484,9 +485,9 @@ def cli(argv=None):
         level=args.verbosity,
         format="%(levelname)s: %(funcName)s(): L%(lineno)d: %(message)s",
     )
-    logging.debug(f"Python version: {sys.version.split()[0]}")
-    logging.debug(f"Script version: {__version__}")
-    logging.debug(f"Arguments: {vars(args)}")
+    logger.debug(f"Python version: {sys.version.split()[0]}")
+    logger.debug(f"Script version: {__version__}")
+    logger.debug(f"Arguments: {vars(args)}")
 
     # Collect input files from the command line arguments
     input_files = args.input
@@ -507,7 +508,7 @@ def cli(argv=None):
     try:
         validate_supported_data_widths(top)
     except UnsupportedDataWidthError as error:
-        logging.error("%s", error)
+        logger.error("%s", error)
         sys.exit(1)
 
     warn_unsupported_side_effects(top)
