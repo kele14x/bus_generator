@@ -1,17 +1,22 @@
 # Known Issues
 
 Open correctness, compatibility, and verification issues identified during the
-project review on 2026-09-25. Resolved issues are removed from this document.
+project review or test. Resolved issues are removed from this document.
 Source references reflect the reorganized template; line numbers may change.
 
-- **P1:** High priority: incorrect data, possible deadlock, unsupported semantics,
+- **P0:** High priority: incorrect data, possible deadlock, unsupported semantics,
   or verification that can conceal these failures.
-- **P2:** Medium priority: protocol compliance, generation/tool compatibility,
+- **P1:** Medium priority: protocol compliance, generation/tool compatibility,
   or gaps in verification.
+- **P2:** Low priority: improvements or UX friendly.
+
+## Function
+
+No known issues observed.
 
 ## Verification
 
-### KI-12 [P2] Simulation may use stale artifacts or skip missing artifacts
+### KI-12 [P1] Simulation may use stale artifacts or skip missing artifacts
 
 - **Location:** `Makefile:33-43`, `tests/test_simulation.py:144-147`, and
   `tests/test_stress.py:727-729`.
@@ -25,7 +30,7 @@ Source references reflect the reorganized template; line numbers may change.
 - **Suggested resolution:** Include generator dependencies and generate fresh
   artifacts for automated verification, or fail clearly when they are missing.
 
-### KI-13 [P2] Read-overlap checks use indistinguishable data
+### KI-13 [P1] Read-overlap checks use indistinguishable data
 
 - **Location:** `tests/test_stress.py:595-611`.
 - **Cause:** The test issues reads immediately after reset without initializing
@@ -36,7 +41,7 @@ Source references reflect the reorganized template; line numbers may change.
 - **Suggested resolution:** Initialize distinguishable values before issuing the
   overlapped reads, including read-only locations through the test model.
 
-### KI-14 [P2] Software/hardware merge checking trusts the DUT mask
+### KI-14 [P1] Software/hardware merge checking trusts the DUT mask
 
 - **Location:** `src/bus_generator/templates/tb_{{axi4l}}_regs.v.jinja2:284-295`
   and `:452-494`.
@@ -47,7 +52,7 @@ Source references reflect the reorganized template; line numbers may change.
 - **Suggested resolution:** Calculate expected masks independently from captured
   AXI WSTRB and the field layout.
 
-### KI-15 [P2] Memory-boundary tests can reject legal adjacent mappings
+### KI-15 [P1] Memory-boundary tests can reject legal adjacent mappings
 
 - **Location:** `src/bus_generator/templates/tb_{{axi4l}}_regs.v.jinja2:545-563`.
 - **Cause:** The two words after each memory unconditionally require SLVERR,
@@ -57,17 +62,3 @@ Source references reflect the reorganized template; line numbers may change.
   responses at `0x140` and `0x144`.
 - **Suggested resolution:** Derive expected responses from the complete address
   map while separately checking that the preceding memory is not selected.
-
-## Recorded verification results
-
-These are results from the original review, not a fresh run after template
-reorganization or creation of this document:
-
-| Command | Result |
-| --- | --- |
-| `SIM=icarus uv run pytest -q` | 76 passed |
-| `SIM=verilator uv run pytest -q` | 26 failed, 50 passed; Verilator 5.052, KI-10 |
-
-The original focused reproductions used temporary fixtures and were not committed
-regression tests. Those review results do not establish that the issues above are
-fixed. No functional fixes or test changes accompanied the original review.
