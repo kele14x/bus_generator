@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from bus_generator import main
 from simulator_support import (
     require_simulator,
 )
@@ -146,6 +147,36 @@ def test_self_check_tb(top, tmp_path):
     if not dut.is_file() or not tb.is_file():
         pytest.skip(f"missing {dut.name}/{tb.name}; run `make artifacts` first")
 
+    if sim == "icarus":
+        returncode, output = _run_icarus(top, dut, tb, tmp_path)
+    elif sim == "verilator":
+        returncode, output = _run_verilator(top, dut, tb, tmp_path)
+    else:
+        returncode, output = _run_questa(top, dut, tb, tmp_path)
+
+    assert "TEST PASSED" in output, f"TB did not pass:\n{output}"
+    assert "TEST FAILED" not in output, f"TB reported failures:\n{output}"
+    assert returncode == 0, f"{sim} exited {returncode}:\n{output}"
+
+
+@pytest.mark.sim
+@pytest.mark.parametrize("base", [0x0, 0x4, 0x100])
+def test_single_entry_memory_tb(tmp_path, base):
+    sim = _selected_simulator()
+    top = "single_entry"
+    rdl = tmp_path / f"{top}.rdl"
+    rdl.write_text(f"""addrmap {top} {{
+        external mem {{
+            mementries = 1;
+            memwidth = 32;
+            sw = rw;
+        }} ram @ 0x{base:x};
+        reg {{ field {{ sw = rw; hw = r; }} data[31:0]; }} control @ 0x200;
+    }};
+    """)
+    main([str(rdl), "-o", str(tmp_path), "-t", "axi4l", "tb_axi4l"])
+    dut = tmp_path / f"{top}_regs.v"
+    tb = tmp_path / f"tb_{top}_regs.v"
     if sim == "icarus":
         returncode, output = _run_icarus(top, dut, tb, tmp_path)
     elif sim == "verilator":

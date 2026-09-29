@@ -23,16 +23,6 @@ Source references reflect the reorganized template; line numbers may change.
 - **Suggested resolution:** Break the paths with registered readiness and
   appropriately reserved buffering.
 
-### KI-08 [P2] Single-entry memories generate invalid Verilog slices
-
-- **Location:** `src/bus_generator/bus_generator.py:275-277` and
-  `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:55,463`.
-- **Trigger:** A memory contains one 32-bit entry.
-- **Impact:** The computed address width is zero, producing a `[-1:0]` address
-  port and `int_addr[1:2]`. Icarus rejects the reversed part-select.
-- **Suggested resolution:** Handle single-entry geometry explicitly, using a
-  valid port width and constant entry index.
-
 ### KI-09 [P2] Ascending field ranges generate invalid Verilog slices
 
 - **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:401`,

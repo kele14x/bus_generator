@@ -870,6 +870,42 @@ def _assigned_expression(content, signal):
     return assignments[0]
 
 
+@pytest.mark.parametrize("entries", [1, 2, 3, 4])
+@pytest.mark.parametrize("base", [0x0, 0x4, 0x100])
+def test_memory_address_geometry(tmp_path, entries, base):
+    rdl_path = tmp_path / "memory_geometry.rdl"
+    rdl_path.write_text(f"""addrmap memory_geometry {{
+        external mem {{
+            memwidth = 32;
+            mementries = {entries};
+            sw = rw;
+        }} ram @ 0x{base:x};
+    }};
+    """)
+    top = _compile(str(rdl_path))
+    mem, = _gather(top, MemGatheringListener).mems
+    width = max(1, (entries - 1).bit_length())
+    assert mem["addr_width"] == width
+    assert mem["mementries"] == entries
+    assert mem["size"] == entries * 4
+
+    rtl = _compact_verilog(convert(top, "{{axi4l}}_regs.v.jinja2"))
+    tb = _compact_verilog(convert(top, "tb_{{axi4l}}_regs.v.jinja2"))
+    assert f"outputwire[{width - 1}:0]ram_addr," in rtl
+    assert f"wire[{width - 1}:0]ram_addr;" in tb
+    if entries == 1:
+        assert _assigned_expression(rtl, "ram_addr") == "1'b0"
+        assert "ram_byte_offset" not in rtl
+    else:
+        assert _assigned_expression(rtl, "ram_addr") == (
+            f"ram_byte_offset[{width + 1}:2]"
+        )
+        addr_width = max(3, (top.total_size - 1).bit_length())
+        assert _assigned_expression(rtl, "ram_byte_offset") == (
+            f"int_addr-{addr_width}'h{base:x}"
+        )
+
+
 def test_convert_renders_memory_base_relative_address(memory_alignment_rdl):
     rdl_path, base, memory_path = memory_alignment_rdl
     top = _compile(str(rdl_path))

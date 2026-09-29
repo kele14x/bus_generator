@@ -7,7 +7,7 @@ from pathlib import Path
 import cocotb
 import pytest
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
+from cocotb.triggers import ClockCycles, FallingEdge, ReadOnly, RisingEdge
 from cocotb_tools.runner import get_runner
 
 from bus_generator import main
@@ -33,9 +33,21 @@ async def test_ram_address(dut):
     dut.s_axi_aresetn.value = 1
     dut.s_axi_rready.value = 1
 
-    contents = (0x12345678, 0x89ABCDEF, 0x76543210)
+    entries = int(os.environ["RAM_ENTRIES"])
+    base = int(os.environ["RAM_BASE"])
+    assert len(dut.ram0_addr) == max(1, (entries - 1).bit_length())
+    if entries == 1:
+        async def check_constant_address():
+            while True:
+                await RisingEdge(dut.s_axi_aclk)
+                await ReadOnly()
+                assert int(dut.ram0_addr.value) == 0
+
+        cocotb.start_soon(check_constant_address())
+
+    contents = (0x12345678, 0x89ABCDEF, 0x76543210)[:entries]
     for expected_index, expected_data in enumerate(contents):
-        byte_address = 0x4 + 4 * expected_index
+        byte_address = base + 4 * expected_index
         await FallingEdge(dut.s_axi_aclk)
         dut.s_axi_araddr.value = byte_address
         dut.s_axi_arvalid.value = 1
@@ -58,7 +70,7 @@ async def test_ram_address(dut):
         assert int(dut.ram0_we.value) == 0
         assert index == expected_index, (
             f"AXI byte address 0x{byte_address:x}: expected RAM entry "
-            f"{expected_index}, got {index} (RAM base is 0x4)"
+            f"{expected_index}, got {index} (RAM base is 0x{base:x})"
         )
 
         await FallingEdge(dut.s_axi_aclk)
@@ -78,8 +90,8 @@ async def test_ram_address(dut):
         else:
             raise AssertionError("AXI R timeout")
 
-    for expected_index in (2, 0, 1):
-        byte_address = 0x4 + 4 * expected_index
+    for expected_index in (entries - 1, *range(entries - 1)):
+        byte_address = base + 4 * expected_index
         data = 0xA5A50000 | expected_index
         await FallingEdge(dut.s_axi_aclk)
         dut.s_axi_awaddr.value = byte_address
@@ -112,7 +124,7 @@ async def test_ram_address(dut):
         index = int(dut.ram0_addr.value)
         assert index == expected_index, (
             f"AXI write address 0x{byte_address:x}: expected RAM entry "
-            f"{expected_index}, got {index} (RAM base is 0x4)"
+            f"{expected_index}, got {index} (RAM base is 0x{base:x})"
         )
         assert int(dut.ram0_we.value) == 1
         assert int(dut.ram0_din.value) == data
@@ -131,20 +143,62 @@ async def test_ram_address(dut):
         else:
             raise AssertionError("AXI B timeout")
 
+    unmapped = [
+        address for address in (base - 4, base + 4 * entries)
+        if 0 <= address < (1 << len(dut.s_axi_araddr))
+    ]
+    assert unmapped
+    for byte_address in unmapped:
+        for channels, response in ((('ar',), 'r'), (('aw', 'w'), 'b')):
+            await FallingEdge(dut.s_axi_aclk)
+            dut.s_axi_araddr.value = byte_address
+            dut.s_axi_awaddr.value = byte_address
+            pending = set(channels)
+            for channel in channels:
+                getattr(dut, f"s_axi_{channel}valid").value = 1
+            for _ in range(16):
+                await RisingEdge(dut.s_axi_aclk)
+                assert int(dut.ram0_en.value) == 0
+                for channel in channels:
+                    if int(getattr(dut, f"s_axi_{channel}ready").value):
+                        pending.discard(channel)
+                await FallingEdge(dut.s_axi_aclk)
+                for channel in channels:
+                    getattr(dut, f"s_axi_{channel}valid").value = int(channel in pending)
+                if not pending:
+                    break
+            else:
+                raise AssertionError("Unmapped AXI request timeout")
+            for _ in range(16):
+                await RisingEdge(dut.s_axi_aclk)
+                assert int(dut.ram0_en.value) == 0
+                if int(getattr(dut, f"s_axi_{response}valid").value):
+                    assert int(getattr(dut, f"s_axi_{response}resp").value) == 2
+                    break
+            else:
+                raise AssertionError("Unmapped AXI response timeout")
+
 
 @pytest.mark.sim
-def test_ram_address_runner():
+@pytest.mark.parametrize("entries,base", [
+    pytest.param(1, 0x0, id="single-zero-base"),
+    pytest.param(1, 0x4, id="single-nonzero-base"),
+    pytest.param(1, 0x100, id="single-high-base"),
+    pytest.param(2, 0x4, id="two-entries"),
+    pytest.param(3, 0x4, id="three-entries"),
+])
+def test_ram_address_runner(entries, base):
     sim = require_simulator(os.environ, shutil.which)
-    build_dir = REPO_ROOT / "sim_build" / "ram_address" / sim
+    build_dir = REPO_ROOT / "sim_build" / "ram_address" / sim / f"{entries}_{base:x}"
     build_dir.mkdir(parents=True, exist_ok=True)
     rdl = build_dir / "ram_address.rdl"
-    rdl.write_text("""addrmap ram_address {
-    external mem {
-        mementries = 3;
+    rdl.write_text(f"""addrmap ram_address {{
+    external mem {{
+        mementries = {entries};
         memwidth = 32;
         sw = rw;
-    } ram0 @ 0x4;
-};
+    }} ram0 @ 0x{base:x};
+}};
 """)
     main([str(rdl), "-o", str(build_dir), "-t", "axi4l"])
     if str(TESTS_DIR) not in sys.path:
@@ -161,9 +215,10 @@ def test_ram_address_runner():
         hdl_toplevel="ram_address_regs",
         test_module="test_ram_address",
         test_dir=build_dir,
+        extra_env={"RAM_ENTRIES": str(entries), "RAM_BASE": str(base)},
         waves=True,
     )
 
 
 if __name__ == "__main__":
-    test_ram_address_runner()
+    test_ram_address_runner(3, 0x4)

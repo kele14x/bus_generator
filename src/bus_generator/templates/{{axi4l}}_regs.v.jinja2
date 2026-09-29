@@ -440,9 +440,9 @@ module {{ top_name }}_regs (
     {%- for mem in mems %}
 
     // Memory {{ mem.hierarchy }} @'h{{ '{:x}'.format(mem.address) }}
-
+    {% if mem.mementries > 1 %}
     wire [ADDR_WIDTH-1:0] {{ mem.name }}_byte_offset;
-
+    {% endif %}
     reg  [ 3:0] {{ mem.name }}_tag_fifo;
     reg  [ 2:0] {{ mem.name }}_tag_fifo_count;
     wire [ 1:0] {{ mem.name }}_tag_fifo_idx;
@@ -461,8 +461,12 @@ module {{ top_name }}_regs (
     wire        {{ mem.name }}_wr_done;
     reg         {{ mem.name }}_wr_ack;
 
+    {% if mem.mementries == 1 -%}
+    assign {{ mem.name }}_addr = 1'b0;
+    {% else -%}
     assign {{ mem.name }}_byte_offset = int_addr - {{ addr_width }}'h{{ '{:x}'.format(mem.address) }};
     assign {{ mem.name }}_addr = {{ mem.name }}_byte_offset[{{ mem.addr_msb }}:{{ mem.addr_lsb }}];
+    {% endif -%}
     assign {{ mem.name }}_en   = int_issue && int_target[{{ loop.index }}];
     assign {{ mem.name }}_we   = {{ mem.name }}_en && int_write;
     assign {{ mem.name }}_din  = int_wr_data[{{ mem.width-1 }}:0];

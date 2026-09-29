@@ -318,7 +318,7 @@ class MemGatheringListener(GeneralListener):
             "address": node.absolute_address,
             "size": node.size,
             "mementries": node.get_property("mementries"),
-            "addr_width": ceil(log2(node.size)) - ceil(log2(self._data_width / 8)),
+            "addr_width": max(1, ceil(log2(node.size)) - ceil(log2(self._data_width / 8))),
             "addr_msb": ceil(log2(node.size)) - 1,
             "addr_lsb": ceil(log2(self._data_width / 8)),
             "width": node.get_property("memwidth"),
