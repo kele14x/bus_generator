@@ -441,6 +441,160 @@ def test_c_header_uses_aligned_word_coordinates(field_bus_mapping):
     }
 
 
+@pytest.fixture(params=[
+    pytest.param(("explicit", 32, 0x0, "[0:7]", (31, 24, 0xFF000000),
+                  (31, 24, 0xFF000000), [(8, 0xFF000000)]), id="upper-byte"),
+    pytest.param(("explicit", 32, 0x0, "[24:31]", (7, 0, 0xFF),
+                  (7, 0, 0xFF), [(1, 0xFF)]), id="lower-byte"),
+    pytest.param(("explicit", 32, 0x0, "[3:12]", (28, 19, 0x1FF80000),
+                  (28, 19, 0x1FF80000), [(4, 0xF80000), (8, 0x1F000000)]),
+                 id="asymmetric-upper-cross-byte"),
+    pytest.param(("explicit", 32, 0x0, "[19:28]", (12, 3, 0x1FF8),
+                  (12, 3, 0x1FF8), [(1, 0xF8), (2, 0x1F00)]),
+                 id="asymmetric-lower-cross-byte"),
+    pytest.param(("explicit", 32, 0x0, "[0:31]", (31, 0, 0xFFFFFFFF),
+                  (31, 0, 0xFFFFFFFF),
+                  [(1, 0xFF), (2, 0xFF00), (4, 0xFF0000), (8, 0xFF000000)]),
+                 id="full-word"),
+    pytest.param(("explicit", 32, 0x0, "[0:0]", (31, 31, 0x80000000),
+                  (31, 31, 0x80000000), [(8, 0x80000000)]), id="bit-zero"),
+    pytest.param(("explicit", 32, 0x0, "[31:31]", (0, 0, 0x1),
+                  (0, 0, 0x1), [(1, 0x1)]), id="bit-thirty-one"),
+    pytest.param(("explicit", 8, 0x3, "[1:4]", (6, 3, 0x78),
+                  (30, 27, 0x78000000), [(8, 0x78000000)]), id="packed-byte"),
+    pytest.param(("explicit", 16, 0x1, "[2:10]", (13, 5, 0x3FE0),
+                  (21, 13, 0x3FE000), [(2, 0xE000), (4, 0x3F0000)]),
+                 id="packed-half-cross-byte"),
+    pytest.param(("explicit", 16, 0x2, "[0:15]", (15, 0, 0xFFFF),
+                  (31, 16, 0xFFFF0000), [(4, 0xFF0000), (8, 0xFF000000)]),
+                 id="packed-full-half"),
+    pytest.param(("explicit", 16, 0x6, "[2:10]", (13, 5, 0x3FE0),
+                  (29, 21, 0x3FE00000), [(4, 0xE00000), (8, 0x3F000000)]),
+                 id="packed-next-word"),
+    pytest.param(("explicit", 32, 0x4, "[0:7]", (31, 24, 0xFF000000),
+                  (31, 24, 0xFF000000), [(8, 0xFF000000)]), id="aligned-next-word"),
+    pytest.param(("inferred", 32, 0x0, "[3:12]", (28, 19, 0x1FF80000),
+                  (28, 19, 0x1FF80000), [(4, 0xF80000), (8, 0x1F000000)]),
+                 id="inferred-ascending-order"),
+    pytest.param(("inherited", 32, 0x0, "[0:0]", (31, 31, 0x80000000),
+                  (31, 31, 0x80000000), [(8, 0x80000000)]), id="inherited-bit-zero"),
+    pytest.param(("inherited", 32, 0x0, "[31:31]", (0, 0, 0x1),
+                  (0, 0, 0x1), [(1, 0x1)]), id="inherited-bit-thirty-one"),
+    pytest.param(("inherited", 32, 0x0, "", (7, 0, 0xFF),
+                  (7, 0, 0xFF), [(1, 0xFF)]), id="inherited-implicit"),
+])
+def msb0_field_mapping(tmp_path, request):
+    order, width, address, field_range, positions, bus_positions, strobes = request.param
+    high, low, mask = positions
+    bus_msb, bus_lsb, bus_mask = bus_positions
+    field_width = high - low + 1
+    reset = 1 if field_width == 1 else 0xA
+    body = f"""reg {{
+        regwidth = {width};
+        field {{ sw = rw; hw = r; fieldwidth = {field_width}; reset = {reset}; }}
+            value{field_range};
+    }} target @ 0x{address:x};"""
+    bit_order = "msb0 = true;" if order == "explicit" else ""
+    if order == "inherited":
+        bit_order = "default msb0 = true;"
+        body = f"addrmap {{ {body} }} inner;"
+    rdl_path = tmp_path / "msb0_field_mapping.rdl"
+    rdl_path.write_text(f"""addrmap msb0_field_mapping {{
+        {bit_order}
+        {body}
+    }};""")
+    top = _compile(str(rdl_path))
+    if order == "inherited":
+        top = top.get_child_by_name("inner")
+    node = top.get_child_by_name("target").get_child_by_name("value")
+    assert node.parent.is_msb0_order
+    if order == "inferred":
+        assert not top.get_property("msb0")
+    if field_range:
+        rdl_msb, rdl_lsb = map(int, field_range.strip("[]").split(":"))
+    else:
+        # Implicit msb0 allocation starts at the high RDL indexes, not [0:7].
+        rdl_msb, rdl_lsb = 24, 31
+    assert (node.high, node.low, node.msb, node.lsb) == (
+        rdl_lsb, rdl_msb, rdl_msb, rdl_lsb,
+    )
+    original = (node.high, node.low, node.msb, node.lsb, node.width,
+                node.get_property("reset"))
+    expected = {
+        "address": address, "aligned_address": address // 4,
+        "bus_address": address // 4 * 4,
+        "high": high, "low": low, "msb": high, "lsb": low, "mask": mask,
+        "bus_msb": bus_msb, "bus_lsb": bus_lsb, "bus_low": bus_lsb,
+        "bus_mask": bus_mask, "width": field_width, "reset": reset,
+        "wstrb_cases": [{"be": be, "mask": lane_mask} for be, lane_mask in strobes],
+    }
+    yield top, expected
+    # Gathering/rendering must not rewrite the shared compiled SystemRDL model.
+    assert (node.high, node.low, node.msb, node.lsb, node.width,
+            node.get_property("reset")) == original
+
+
+def test_msb0_field_metadata_is_normalized(msb0_field_mapping):
+    top, expected = msb0_field_mapping
+    for _ in range(2):
+        field, = _gather(top, FieldsGatheringListener).fields
+        assert {key: field[key] for key in expected} == expected
+
+
+def test_msb0_rtl_uses_normalized_bus_slices(msb0_field_mapping):
+    top, expected = msb0_field_mapping
+    content = _compact_verilog(convert(top, "{{axi4l}}_regs.v.jinja2"))
+    bus_slice = f"[{expected['bus_msb']}:{expected['bus_lsb']}]"
+
+    assert f"outputwire[{expected['width'] - 1}:0]target_value_out" in content
+    assert f"reg[{expected['width'] - 1}:0]target_value_value;" in content
+    assert f"target_value_value<='h{expected['reset']:x};" in content
+    assert _assigned_expression(content, "target_value_sw_mask") == f"sw_byte_mask{bus_slice}"
+    assert f"int_wr_data{bus_slice}&target_value_sw_mask" in content
+    assert (
+        f"local_rd_data_next{bus_slice}=local_rd_data_next{bus_slice}|target_value_value;"
+    ) in content
+    assert _assigned_expression(content, "target_value_sel") == (
+        f"(int_addr[2:2]=='h{expected['aligned_address']:x})"
+    )
+
+
+def test_msb0_c_header_uses_normalized_bus_coordinates(msb0_field_mapping):
+    top, expected = msb0_field_mapping
+    content = convert(top, "{{c_header}}.h.jinja2")
+    macros = dict(re.findall(r"#define (\w+) (0x[0-9a-f]+)", content))
+
+    assert {key: int(value, 16) for key, value in macros.items()} == {
+        "TARGET_VALUE_ADDR": expected["bus_address"],
+        "TARGET_VALUE_MASK": expected["bus_mask"],
+        "TARGET_VALUE_OFFSET": expected["bus_low"],
+        "TARGET_VALUE_WIDTH": expected["width"],
+        "TARGET_VALUE_DEFAULT": expected["reset"],
+    }
+
+
+def test_msb0_generated_tb_uses_normalized_slices_and_strobes(msb0_field_mapping):
+    top, expected = msb0_field_mapping
+    content = _compact_verilog(convert(top, "tb_{{axi4l}}_regs.v.jinja2"))
+    bus_slice = f"[{expected['bus_msb']}:{expected['bus_lsb']}]"
+    mask_literal = f"32'h{expected['bus_mask']:x}"
+
+    assert f"wire[{expected['width'] - 1}:0]target_value_out;" in content
+    assert f"addr='h{expected['bus_address']:x};" in content
+    assert f"if(target_value_out!==wdata{bus_slice})" in content
+    assert f"check_data(addr,rdata&{mask_literal},wdata&{mask_literal});" in content
+    assert [int(be, 16) for be in re.findall(r"be=4'h([0-9a-f]+);", content)] == [
+        case["be"] for case in expected["wstrb_cases"]
+    ]
+    masks = re.findall(
+        r"expected=\(expected&~32'h([0-9a-f]+)\)\|\(wdata&32'h([0-9a-f]+)\);",
+        content,
+    )
+    assert [(int(old, 16), int(new, 16)) for old, new in masks] == [
+        (case["mask"], case["mask"]) for case in expected["wstrb_cases"]
+    ]
+
+
 @pytest.mark.parametrize("width", [8, 16])
 def test_single_narrow_register_keeps_byte_address_bits(tmp_path, width):
     rdl_path = tmp_path / "tiny.rdl"

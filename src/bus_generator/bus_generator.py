@@ -267,9 +267,13 @@ class FieldsGatheringListener(GeneralListener):
         self.fields = []
 
     def exit_Field(self, node: FieldNode):
+        high, low = node.high, node.low
+        if node.parent.is_msb0_order:
+            regwidth = node.parent.get_property("regwidth")
+            high, low = regwidth - 1 - low, regwidth - 1 - high
         byte_offset = self._address % (1 << ADDR_WIDTH_LSB)
         bit_offset = byte_offset * 8
-        mask = 2 ** (node.high + 1) - 2**node.low
+        mask = 2 ** (high + 1) - 2**low
         bus_mask = mask << bit_offset
         field = {
             "name": "_".join(self._path),
@@ -278,21 +282,21 @@ class FieldsGatheringListener(GeneralListener):
             "address": self._address,
             "aligned_address": self._address >> ADDR_WIDTH_LSB,
             "bus_address": self._address - byte_offset,
-            "bus_msb": node.msb + bit_offset,
-            "bus_lsb": node.lsb + bit_offset,
-            "bus_low": node.low + bit_offset,
+            "bus_msb": high + bit_offset,
+            "bus_lsb": low + bit_offset,
+            "bus_low": low + bit_offset,
             "bus_mask": bus_mask,
             "reset": node.get_property("reset") or 0,
-            "width": node.high - node.low + 1,
-            "high": node.high,
+            "width": high - low + 1,
+            "high": high,
             "mask": mask,
-            "low": node.low,
-            "msb": node.msb,
-            "lsb": node.lsb,
+            "low": low,
+            "msb": high,
+            "lsb": low,
             "wstrb_cases": [
                 {"be": 1 << byte, "mask": bus_mask & (0xFF << (byte * 8))}
                 for byte in range(
-                    byte_offset + node.low // 8, byte_offset + node.high // 8 + 1
+                    byte_offset + low // 8, byte_offset + high // 8 + 1
                 )
             ],
             "implements_storage": node.implements_storage,

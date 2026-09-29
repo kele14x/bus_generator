@@ -23,16 +23,6 @@ Source references reflect the reorganized template; line numbers may change.
 - **Suggested resolution:** Break the paths with registered readiness and
   appropriately reserved buffering.
 
-### KI-09 [P2] Ascending field ranges generate invalid Verilog slices
-
-- **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:401`,
-  `:411-413`, and `:512`.
-- **Trigger:** Valid SystemRDL uses `msb0` with an ascending field such as `[0:7]`.
-- **Impact:** The template inserts `[0:7]` into descending bus vectors. Icarus
-  rejects the resulting mask, write-data, and readback part-selects.
-- **Suggested resolution:** Translate field numbering to bus bit positions
-  consistently, or reject unsupported numbering modes before rendering.
-
 ## Verification
 
 ### KI-12 [P2] Simulation may use stale artifacts or skip missing artifacts

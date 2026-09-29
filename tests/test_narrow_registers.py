@@ -51,6 +51,28 @@ _MIXED = """
         field { sw = w; hw = r; reset = 16'h2468; } value[15:0];
     } writeonly @ 2;
 """
+_MSB0 = """
+    msb0;
+    reg {
+        field { sw = rw; hw = r; reset = 8'ha6; } upper[0:7];
+        field { sw = rw; hw = r; reset = 12'hb35; } middle[12:23];
+        field { sw = rw; hw = r; reset = 1; } flag[31:31];
+    } control @ 0;
+    reg {
+        field { sw = r; hw = w; } value[0:7];
+    } readonly @ 4;
+"""
+_MSB0_NARROW = """
+    msb0;
+    reg {
+        regwidth = 8; accesswidth = 8;
+        field { sw = rw; hw = r; reset = 8'h6d; } value[0:7];
+    } neighbor @ 0;
+    reg {
+        regwidth = 16; accesswidth = 16;
+        field { sw = rw; hw = r; reset = 8'ha6; } value[2:9];
+    } shifted @ 1;
+"""
 
 
 def _generate(tmp_path, body):
@@ -430,10 +452,93 @@ def test_packed_readonly_writeonly(tmp_path, simulator):
     )
 
 
-def test_high_lane_software_hardware_merge(tmp_path, simulator):
+def test_msb0_fields(tmp_path, simulator):
     _directed(
-        tmp_path, simulator,
+        tmp_path, simulator, _MSB0, 3,
+        {"control_upper_out": (8, None), "control_middle_out": (12, None),
+         "control_flag_out": (1, None), "readonly_value_in": (8, "8'h69")},
         """
+        check_control(32'ha60b3501, 8'ha6, 12'hb35, 1'b1);
+        write_word(0, 32'h12345678, 4'hf);
+        check_control(32'h12045600, 8'h12, 12'h456, 1'b0);
+        write_word(0, 32'hffffffff, 4'h1);
+        check_control(32'h12045601, 8'h12, 12'h456, 1'b1);
+        write_word(0, 32'hd4ffffff, 4'h8);
+        check_control(32'hd4045601, 8'hd4, 12'h456, 1'b1);
+        write_word(0, 32'hffffff00, 4'h1);
+        check_control(32'hd4045600, 8'hd4, 12'h456, 1'b0);
+        write_word(0, 32'hffffabff, 4'h2);
+        check_control(32'hd404ab00, 8'hd4, 12'h4ab, 1'b0);
+        write_word(0, 32'hfff3ffff, 4'h4);
+        check_control(32'hd403ab00, 8'hd4, 12'h3ab, 1'b0);
+        write_word(0, 32'h89abcdef, 4'h0);
+        check_control(32'hd403ab00, 8'hd4, 12'h3ab, 1'b0);
+        write_word(0, 32'h89abcdef, 4'hf);
+        check_control(32'h890bcd01, 8'h89, 12'hbcd, 1'b1);
+        readonly_value_in = 8'hc3;
+        expect_word(4, 32'hc3000000);
+        readonly_value_in = 8'h69;
+        expect_word(4, 32'h69000000);
+        readonly_value_in = 8'hc3;
+        write_word(4, 32'hffffffff, 4'hf, 2'b10);
+        expect_word(4, 32'hc3000000);
+        reset_dut;
+        check_control(32'ha60b3501, 8'ha6, 12'hb35, 1'b1);
+        """,
+        helpers="""
+        task check_control(input [31:0] expected, input [7:0] upper,
+                           input [11:0] middle, input flag);
+            begin
+                expect_word(0, expected);
+                if (control_upper_out !== upper || control_middle_out !== middle ||
+                    control_flag_out !== flag)
+                    $fatal(1, "TEST FAILED: msb0 hardware outputs");
+            end
+        endtask
+        """,
+    )
+
+
+def test_msb0_narrow_cross_byte_field(tmp_path, simulator):
+    _directed(
+        tmp_path, simulator, _MSB0_NARROW, 3,
+        {"neighbor_value_out": (8, None), "shifted_value_out": (8, None)},
+        """
+        check_fields(32'h0029806d, 8'ha6, 8'h6d);
+        write_word(1, 32'h0014c022, 4'hf);
+        check_fields(32'h0014c022, 8'h53, 8'h22);
+        write_word(0, 32'hffff3fff, 4'h2);
+        check_fields(32'h00140022, 8'h50, 8'h22);
+        write_word(1, 32'hff2dffff, 4'h4);
+        check_fields(32'h002d0022, 8'hb4, 8'h22);
+        write_word(0, 32'hffff7fff, 4'h2);
+        check_fields(32'h002d4022, 8'hb5, 8'h22);
+        write_word(1, 32'hffffffff, 4'h8);
+        check_fields(32'h002d4022, 8'hb5, 8'h22);
+        write_word(0, 32'h00000000, 4'h0);
+        check_fields(32'h002d4022, 8'hb5, 8'h22);
+        write_word(1, 32'h0000009a, 4'h1);
+        check_fields(32'h002d409a, 8'hb5, 8'h9a);
+        reset_dut;
+        check_fields(32'h0029806d, 8'ha6, 8'h6d);
+        """,
+        helpers="""
+        task check_fields(input [31:0] expected, input [7:0] shifted,
+                          input [7:0] neighbor);
+            begin
+                expect_word(0, expected);
+                expect_word(1, expected);
+                if (shifted_value_out !== shifted || neighbor_value_out !== neighbor)
+                    $fatal(1, "TEST FAILED: narrow msb0 hardware outputs");
+            end
+        endtask
+        """,
+    )
+
+
+@pytest.mark.parametrize("numbering", ["lsb0", "msb0"])
+def test_high_lane_software_hardware_merge(tmp_path, simulator, numbering):
+    body = """
         reg {
             regwidth = 16; accesswidth = 16;
             field { sw = rw; hw = r; reset = 16'h1357; } value[15:0];
@@ -442,7 +547,11 @@ def test_high_lane_software_hardware_merge(tmp_path, simulator):
             regwidth = 16; accesswidth = 16;
             field { sw = rw; hw = rw; reset = 16'h2468; } value[15:0];
         } merged @ 2;
-        """,
+    """
+    if numbering == "msb0":
+        body = "msb0;\n" + body.replace("[15:0]", "[0:15]")
+    _directed(
+        tmp_path, simulator, body,
         3, {"neighbor_value_out": (16, None), "merged_value_out": (16, None),
             "merged_value_in": (16, "16'h69c3")},
         """
@@ -502,6 +611,8 @@ def test_high_lane_software_hardware_merge(tmp_path, simulator):
     pytest.param(_PACKED + _THIRD, id="packed_with_third"),
     pytest.param(_MIXED, id="mixed_permissions"),
     pytest.param(_SINGLE, id="single_byte"),
+    pytest.param(_MSB0, id="msb0"),
+    pytest.param(_MSB0_NARROW, id="msb0_narrow"),
 ])
 def test_generated_narrow_testbench(tmp_path, simulator, body):
     dut = _generate(tmp_path, body)
