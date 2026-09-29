@@ -1,5 +1,5 @@
 # Makefile for bus_generator test tasks.
-# Run `make` or `make all` to run the full suite; see targets below.
+# Run `make` for help or `make all SIM=<simulator>` for the full suite.
 
 PYTEST := uv run pytest
 GENERATED := generated
@@ -11,23 +11,39 @@ C_HEADER_ARTIFACTS := $(addprefix $(GENERATED)/c_header/,$(addsuffix .h,$(SAMPLE
 TB_AXI4L_ARTIFACTS := $(addprefix $(GENERATED)/tb_axi4l/tb_,$(addsuffix _regs.v,$(SAMPLES)))
 ARTIFACTS := $(AXI4L_ARTIFACTS) $(C_HEADER_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 
-.PHONY: all test unit artifacts sim stress fast clean help
+.PHONY: all tests unit artifacts sim clean help
 
-# Show available targets and simulator selection. Simulator-marked tests require
-# SIM; supported values are icarus, verilator, questa, iverilog (an alias for
-# icarus), and vsim (an alias for questa).
 help:
-	@echo "Targets: all/test unit artifacts sim stress fast clean"
-	@echo "Simulator-marked tests require SIM=icarus, SIM=verilator, SIM=questa, SIM=iverilog, or SIM=vsim"
+	@printf '\n%s\n' 'bus_generator — development commands'
+	@printf '\n  %s\n' 'Usage: make <target> [SIM=<simulator>]'
+	@printf '\n%s\n' 'Tests'
+	@printf '  %-14s %s\n' \
+		'unit'        'Run Python-only tests; no simulator needed' \
+		'sim'         'Run simulation and stress tests (requires SIM)' \
+		'all / tests' 'Run both unit and sim (requires SIM)'
+	@printf '\n%s\n' 'Utilities'
+	@printf '  %-14s %s\n' \
+		'artifacts'  'Generate configured samples and templates into ./generated/' \
+		'clean'      'Remove generated output, caches, and simulation results' \
+		'help'       'Show this help (default target)'
+	@printf '\n%s\n' 'Simulator selection'
+	@printf '  %s\n' \
+		'Set SIM explicitly for sim, all, and tests.' \
+		'Supported: icarus, verilator, questa' \
+		'Aliases:   iverilog = icarus, vsim = questa'
+	@printf '\n%s\n' 'Examples'
+	@printf '  %s\n' \
+		'make unit' \
+		'make sim SIM=icarus' \
+		'make all SIM=verilator'
+	@printf '\n'
 
-# Run every test layer (unit + artifacts + simulation; requires SIM).
-all test: unit artifacts sim
+all tests: unit sim
 
-# Pure-Python unit tests (CLI, listeners, simulator selection, discover_templates, convert).
 unit:
-	$(PYTEST) tests/test_unit.py tests/test_simulator_support.py
+	$(PYTEST) -m 'not sim'
 
-# Render every sample x template into ./generated/<template>/ for reuse.
+# Render configured samples and templates into ./generated/<template>/ for reuse.
 artifacts: $(ARTIFACTS)
 
 $(GENERATED)/axi4l/%_regs.v: samples/%.rdl src/bus_generator/templates/{{axi4l}}_regs.v.jinja2
@@ -45,13 +61,6 @@ $(GENERATED)/tb_axi4l/tb_%_regs.v: samples/%.rdl src/bus_generator/templates/tb_
 # All sim-marked tests against reusable generated/ artifacts; requires SIM.
 sim: $(AXI4L_ARTIFACTS) $(TB_AXI4L_ARTIFACTS)
 	$(PYTEST) -m sim
-
-# Cocotb random AXI4-Lite stress tests for all generated samples; requires SIM.
-stress: $(AXI4L_ARTIFACTS)
-	$(PYTEST) tests/test_stress.py
-
-# Unit + artifacts only (fast path, no simulator needed).
-fast: unit artifacts
 
 # Remove generated/local artifacts: bytecode caches, pytest cache, sim build
 # dirs, reusable generated output, and stray cocotb result XML files.

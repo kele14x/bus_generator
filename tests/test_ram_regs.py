@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import os
+import shutil
 import sys
 from pathlib import Path
 
 import cocotb
+import pytest
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge
 from cocotb_tools.runner import get_runner
+from simulator_support import require_simulator
 
 TESTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
@@ -228,8 +231,9 @@ async def test_ram_read(dut):
         )
 
 
+@pytest.mark.sim
 def test_ram_regs_runner():
-    sim = os.getenv("SIM", "questa")
+    sim = require_simulator(os.environ, shutil.which)
 
     sources = [REPO_ROOT / "generated" / "axi4l" / "ram_regs.v"]
     if str(TESTS_DIR) not in sys.path:
