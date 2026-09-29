@@ -33,16 +33,6 @@ Source references reflect the reorganized template; line numbers may change.
 - **Suggested resolution:** Translate field numbering to bus bit positions
   consistently, or reject unsupported numbering modes before rendering.
 
-### KI-10 [P2] Verilator 5.052 rejects the response-FIFO index width
-
-- **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:268`.
-- **Cause:** `b_pending - 2'd1` is a two-bit index into the two-bit
-  `b_err_fifo`, which requires a one-bit index.
-- **Impact:** Verilator 5.052 emits `WIDTHTRUNC`; the existing test commands treat
-  it as fatal. The review run had 26 failures caused by this warning.
-- **Suggested resolution:** Use an explicitly correct-width index rather than
-  globally suppressing warnings.
-
 ## Verification
 
 ### KI-12 [P2] Simulation may use stale artifacts or skip missing artifacts
