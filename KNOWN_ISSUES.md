@@ -9,20 +9,6 @@ Source references reflect the reorganized template; line numbers may change.
 - **P2:** Medium priority: protocol compliance, generation/tool compatibility,
   or gaps in verification.
 
-## RTL and generator
-
-### KI-07 [P2] AXI interface inputs have combinational paths to outputs
-
-- **Location:** `src/bus_generator/templates/{{axi4l}}_regs.v.jinja2:127-138`
-  and `:209-210`.
-- **Evidence:** With buffered AW/W requests, asserting `ARVALID` changed
-  `AWREADY` and `WREADY` without a clock edge. Response-ready signals also feed
-  request-ready logic through credit recycling.
-- **Impact:** This violates the AXI requirement against combinational paths
-  between interface inputs and outputs and can complicate interconnect timing.
-- **Suggested resolution:** Break the paths with registered readiness and
-  appropriately reserved buffering.
-
 ## Verification
 
 ### KI-12 [P2] Simulation may use stale artifacts or skip missing artifacts

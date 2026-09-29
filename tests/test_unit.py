@@ -1089,7 +1089,7 @@ def test_convert_renders_response_targets(rdl_path):
         assert "int_addr" in _assigned_expression(content, f"{name}_sel")
         assert f"{name}_strb" not in content
     assert "reg[STRB_WIDTH-1:0]int_wr_strb;" in content
-    assert "w_back_strb<=s_axi_wstrb;" in content
+    assert "w_strb_fifo<={w_strb_fifo[STRB_WIDTH-1:0],s_axi_wstrb};" in content
 
     assert f"localparamintegerTARGET_COUNT={len(mems) + 1};" in content
     assert "wire[TARGET_COUNT-1:0]int_target;" in content
@@ -1134,22 +1134,42 @@ def test_convert_renders_arbitration(rdl_path):
     content = _compact_verilog(convert(_compile(rdl_path), "{{axi4l}}_regs.v.jinja2"))
     expected_assignments = {
         "arb_ready": "!int_valid||int_issue",
-        "arb_read_eligible": "(ar_back_valid||s_axi_arvalid)&&r_credit",
-        "arb_write_eligible": "aw_back_valid&&w_back_valid&&b_credit",
+        "arb_read_eligible": "(ar_fifo_count!=2'd0)&&r_credit",
+        "arb_write_eligible": "(aw_fifo_count!=2'd0)&&(w_fifo_count!=2'd0)&&b_credit",
         "arb_grant_read": (
             "arb_ready&&arb_read_eligible&&(!arb_write_eligible||arb_read_priority)"
         ),
         "arb_grant_write": (
             "arb_ready&&arb_write_eligible&&(!arb_read_eligible||!arb_read_priority)"
         ),
-        "ar_load_back": "arb_grant_read&&ar_back_valid",
-        "ar_load_direct": "arb_grant_read&&!ar_back_valid&&s_axi_arvalid",
-        "s_axi_arready": "!ar_back_valid||ar_load_back",
-        "s_axi_awready": "!aw_back_valid||arb_grant_write",
-        "s_axi_wready": "!w_back_valid||arb_grant_write",
     }
     for signal, expression in expected_assignments.items():
         assert _assigned_expression(content, signal) == expression
+    for channel in ("ar", "aw", "w"):
+        count = f"{channel}_fifo_count"
+        pop = "arb_grant_read" if channel == "ar" else "arb_grant_write"
+        assert f"reg[1:0]{count};" in content
+        assert f"{count}<=2'd0;" in content
+        assert _assigned_expression(content, f"s_axi_{channel}ready") == f"{count}!=2'd2"
+        assert _assigned_expression(content, f"{channel}_push") == (
+            f"s_axi_{channel}valid&&s_axi_{channel}ready"
+        )
+        assert _assigned_expression(content, f"{channel}_fifo_idx") == f"{count}[0]-1'b1"
+        assert (
+            f"case({{{channel}_push,{pop}}})"
+            f"2'b10:{count}<={count}+2'd1;"
+            f"2'b01:{count}<={count}-2'd1;"
+            f"default:{count}<={count};endcase"
+        ) in content
+    for fifo, width, source in (("ar_addr_fifo", "ADDR_WIDTH", "araddr"),
+                                ("aw_addr_fifo", "ADDR_WIDTH", "awaddr"),
+                                ("w_data_fifo", "DATA_WIDTH", "wdata"),
+                                ("w_strb_fifo", "STRB_WIDTH", "wstrb")):
+        assert f"reg[2*{width}-1:0]{fifo};" in content
+        assert re.findall(rf"{fifo}<=([^;]+);", content) == [
+            f"{{{fifo}[{width}-1:0],s_axi_{source}}}"
+        ]
+    assert "ar_load_direct" not in content
 
 
 @pytest.mark.parametrize("rdl_path", [GPIO_RDL, SIMPLE_RDL, RAM_RDL, MEM_ACCESS_RDL])

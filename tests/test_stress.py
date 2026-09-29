@@ -815,15 +815,15 @@ async def stress_mixed_overlap(dut):
 def _monitor_widths(mems, address_width):
     """Export checked internals through wrapper ports, even under Verilator."""
     widths = {name: 1 for name in (
-        "int_issue int_valid int_write arb_ready arb_read_priority ar_back_valid "
-        "aw_back_valid w_back_valid arb_grant_read arb_grant_write b_credit r_credit int_idle "
+        "int_issue int_valid int_write arb_ready arb_read_priority "
+        "arb_grant_read arb_grant_write b_credit r_credit int_idle "
         "int_rd_en int_wr_en int_rd_ack int_wr_ack int_rd_err "
         "int_wr_err local_rd_ack local_wr_ack local_rd_err local_wr_err "
         "b_fifo_idx r_fifo_idx"
     ).split()}
     widths.update({name: 2 for name in (
         "b_outstanding r_outstanding b_wait_ack r_wait_ack b_fifo_count r_fifo_count "
-        "b_err_fifo r_err_fifo"
+        "b_err_fifo r_err_fifo ar_fifo_count aw_fifo_count w_fifo_count"
     ).split()})
     widths.update(int_addr=address_width, int_wr_data=32, int_wr_strb=4,
                   int_rd_data=32, local_rd_data=32, r_data_fifo=2 * DATA_WIDTH,
@@ -874,6 +874,7 @@ class RamContractBench:
 
     def _clear_queues(self):
         self.drive = {ch: deque() for ch in ("aw", "w", "ar")}
+        self.requests = {ch: deque() for ch in ("aw", "w", "ar")}
         self.expected = {ch: deque() for ch in ("r", "w")}
         self.responses = {ch: deque() for ch in ("r", "w")}
         self.inflight = {ch: deque() for ch in ("r", "w")}
@@ -971,6 +972,7 @@ class RamContractBench:
         state = self._sample()
         for name in ("b_outstanding r_outstanding b_wait_ack r_wait_ack "
                      "b_fifo_count r_fifo_count int_rd_ack int_wr_ack "
+                     "ar_fifo_count aw_fifo_count w_fifo_count "
                      "local_rd_ack local_wr_ack local_rd_data axi_bvalid axi_rvalid").split():
             assert state[name] == 0, f"reset did not clear {name}"
         for mem in self.mems:
@@ -991,6 +993,7 @@ class RamContractBench:
         for _ in range(8):
             await self.step()
         assert not any(self.expected.values()) and not any(self.drive.values())
+        assert not any(self.requests.values())
         assert not any(self.inflight.values()) and not any(self.buffered.values())
         assert not any(self.tags.values()) and not self.next_acks
         assert self.retired + self.aborted == self.submitted
@@ -1039,9 +1042,13 @@ class RamContractBench:
                 assert s["r_data_fifo"] == sum(
                     tx["result"] << (slot * DATA_WIDTH) for slot, tx in enumerate(newest_first))
 
+        for bus, queue in self.requests.items():
+            assert s[bus + "_fifo_count"] == len(queue) <= 2
+            assert s["axi_" + bus + "ready"] == (len(queue) < 2)
+
         # Check KI02 at the arbitration boundary, not by bypassing a blocked head.
-        read_waiting = s["ar_back_valid"] or s["axi_arvalid"]
-        write_waiting = s["aw_back_valid"] and s["w_back_valid"]
+        read_waiting = bool(self.requests["ar"])
+        write_waiting = bool(self.requests["aw"] and self.requests["w"])
         for preferred, other, bit in (("read", "write", 1), ("write", "read", 0)):
             pc, oc = ("r", "b") if preferred == "read" else ("b", "r")
             if (s["arb_ready"] and read_waiting and write_waiting
@@ -1065,10 +1072,15 @@ class RamContractBench:
                     assert s["int_rd_data"] == tx["result"], "ACK/data misalignment or unmasked source"
         assert len(self.next_acks) <= 1, "two blocks completed together"
 
+        if s["arb_grant_read"]:
+            self.requests["ar"].popleft()
+        if s["arb_grant_write"]:
+            assert self.requests["aw"].popleft() is self.requests["w"].popleft()
         for bus, queue in self.drive.items():
             if s["axi_" + bus + "valid"] and s["axi_" + bus + "ready"]:
                 tx = queue.popleft()
                 tx["accepted"].add(bus)
+                self.requests[bus].append(tx)
         for ch, bus in (("r", "r"), ("w", "b")):
             valid, ready = s["axi_" + bus + "valid"], s["axi_" + bus + "ready"]
             payload = (s["axi_rdata"], s["axi_rresp"]) if ch == "r" else (s["axi_bresp"],)
@@ -1256,9 +1268,10 @@ async def ram_tag_fifo_delayed(dut):
             bench.bready = bench.rready = True
             retired = bench.retired
             await bench.until(lambda: bench.retired == retired + 1, "first read retirement")
+            replacement = bench.submit(False, addr)
+            await bench.until(lambda: replacement["accepted"] == {"ar"}, "replacement read acceptance")
             # Release the old W response one edge before the new R physically issues.
             memory.response_budget = 1
-            replacement = bench.submit(False, addr)
             await bench.until(lambda: replacement["issued"], "simultaneous old-W pop/new-R push")
             assert bench.cover["push_pop_different_tag"], "simultaneous push/pop was not exercised"
         bench.bready = bench.rready = False
