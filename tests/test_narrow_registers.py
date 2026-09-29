@@ -6,8 +6,9 @@ import sys
 from textwrap import dedent, indent
 
 import pytest
-from bus_generator import main
 from test_simulation import _run_icarus, _run_questa, _run_verilator
+
+from bus_generator import main
 
 pytestmark = pytest.mark.sim
 
@@ -211,8 +212,9 @@ endmodule
 """
 
 
-def _directed(tmp_path, simulator, body, addr_width, hardware, steps,
-              helpers="", reset_checks=""):
+def _directed(
+    tmp_path, simulator, body, addr_width, hardware, steps, helpers="", reset_checks=""
+):
     """hardware maps explicit port names to (width, input initial value or None)."""
     dut = _generate(tmp_path, body)
     declarations = []
@@ -246,8 +248,11 @@ def test_packed_halfwords(tmp_path, simulator, with_third):
     if with_third:
         hardware["third_value_out"] = (32, None)
     _directed(
-        tmp_path, simulator, _PACKED + (_THIRD if with_third else ""),
-        3, hardware,
+        tmp_path,
+        simulator,
+        _PACKED + (_THIRD if with_third else ""),
+        3,
+        hardware,
         """
         check_pair(32'habcd1234);
         write_word(0, 32'h87654321, 4'hf); check_pair(32'h87654321);
@@ -258,7 +263,9 @@ def test_packed_halfwords(tmp_path, simulator, with_third):
         write_word(2, 32'hff3bffff, 4'h4); check_pair(32'h243b2a19);
         write_word(0, 32'h4cffffff, 4'h8); check_pair(32'h4c3b2a19);
         write_word(2, 32'hffffffff, 4'h0); check_pair(32'h4c3b2a19);
-        """ + ("""
+        """
+        + (
+            """
         // The adjacent aligned word must neither alias nor be clobbered.
         expect_word(4, 32'h89abcdef);
         write_word(4, 32'h10203040, 4'hf);
@@ -266,16 +273,21 @@ def test_packed_halfwords(tmp_path, simulator, with_third):
         if (third_value_out !== 32'h10203040)
             $fatal(1, "TEST FAILED: third hardware output");
         check_pair(32'h4c3b2a19);
-        """ if with_third else """
+        """
+            if with_third
+            else """
         expect_word(4, 32'h0, 2'b10);
         write_word(4, 32'hffffffff, 4'hf, 2'b10);
         expect_word(7, 32'h0, 2'b10);
         write_word(7, 32'hffffffff, 4'hf, 2'b10);
         check_pair(32'h4c3b2a19);
-        """) + """
+        """
+        )
+        + """
         reset_dut;
         check_pair(32'habcd1234);
-        """ + ("expect_word(4, 32'h89abcdef);" if with_third else ""),
+        """
+        + ("expect_word(4, 32'h89abcdef);" if with_third else ""),
         helpers="""
         task check_pair(input [31:0] expected);
             begin
@@ -291,7 +303,8 @@ def test_packed_halfwords(tmp_path, simulator, with_third):
 
 def test_nested_byte_array(tmp_path, simulator):
     _directed(
-        tmp_path, simulator,
+        tmp_path,
+        simulator,
         """
         regfile {
             reg {
@@ -300,7 +313,8 @@ def test_nested_byte_array(tmp_path, simulator):
             } bytes[4] @ 0 += 1;
         } bank @ 0x20;
         """,
-        6, {f"bank_bytes_{index}_value_out": (8, None) for index in range(4)},
+        6,
+        {f"bank_bytes_{index}_value_out": (8, None) for index in range(4)},
         """
         check_bytes(32'h5a5a5a5a);
         write_word('h20, 32'h44332211, 4'hf); check_bytes(32'h44332211);
@@ -334,14 +348,16 @@ def test_nested_byte_array(tmp_path, simulator):
 @pytest.mark.parametrize("base", [0, 4])
 def test_unused_word_returns_slverr(tmp_path, simulator, width, base):
     _directed(
-        tmp_path, simulator,
+        tmp_path,
+        simulator,
         f"""
         reg {{
             regwidth = {width};
             field {{ sw = rw; hw = r; reset = 0x5a; }} value[{width - 1}:0];
         }} target @ {base};
         """,
-        3, {"target_value_out": (width, None)},
+        3,
+        {"target_value_out": (width, None)},
         f"""
         expect_word({base}, 32'h5a);
         write_word({base}, 32'hc3, 4'hf);
@@ -359,7 +375,11 @@ def test_unused_word_returns_slverr(tmp_path, simulator, width, base):
 
 def test_single_byte_minimum_address_width(tmp_path, simulator):
     _directed(
-        tmp_path, simulator, _SINGLE, 3, {"single_byte_value_out": (8, None)},
+        tmp_path,
+        simulator,
+        _SINGLE,
+        3,
+        {"single_byte_value_out": (8, None)},
         """
         check_byte(32'h0000006d);
         write_word(0, 32'hfedcbab5, 4'hf); check_byte(32'h000000b5);
@@ -383,14 +403,16 @@ def test_single_byte_minimum_address_width(tmp_path, simulator):
 
 def test_unaligned_field_crosses_byte_lanes(tmp_path, simulator):
     _directed(
-        tmp_path, simulator,
+        tmp_path,
+        simulator,
         """
         reg {
             regwidth = 16; accesswidth = 16;
             field { sw = rw; hw = r; reset = 8'ha6; } value[11:4];
         } shifted @ 1;
         """,
-        3, {"shifted_value_out": (8, None)},
+        3,
+        {"shifted_value_out": (8, None)},
         """
         // Register bits [11:4] at byte 1 occupy AXI bits [19:12].
         check_shifted(32'h000a6000, 8'ha6);
@@ -420,7 +442,10 @@ def test_unaligned_field_crosses_byte_lanes(tmp_path, simulator):
 
 def test_packed_readonly_writeonly(tmp_path, simulator):
     _directed(
-        tmp_path, simulator, _MIXED, 3,
+        tmp_path,
+        simulator,
+        _MIXED,
+        3,
         {"readonly_value_out": (16, None), "writeonly_value_out": (16, None)},
         """
         check_permissions(16'h2468);
@@ -451,9 +476,16 @@ def test_packed_readonly_writeonly(tmp_path, simulator):
 
 def test_msb0_fields(tmp_path, simulator):
     _directed(
-        tmp_path, simulator, _MSB0, 3,
-        {"control_upper_out": (8, None), "control_middle_out": (12, None),
-         "control_flag_out": (1, None), "readonly_value_in": (8, "8'h69")},
+        tmp_path,
+        simulator,
+        _MSB0,
+        3,
+        {
+            "control_upper_out": (8, None),
+            "control_middle_out": (12, None),
+            "control_flag_out": (1, None),
+            "readonly_value_in": (8, "8'h69"),
+        },
         """
         check_control(32'ha60b3501, 8'ha6, 12'hb35, 1'b1);
         write_word(0, 32'h12345678, 4'hf);
@@ -498,7 +530,10 @@ def test_msb0_fields(tmp_path, simulator):
 
 def test_msb0_narrow_cross_byte_field(tmp_path, simulator):
     _directed(
-        tmp_path, simulator, _MSB0_NARROW, 3,
+        tmp_path,
+        simulator,
+        _MSB0_NARROW,
+        3,
         {"neighbor_value_out": (8, None), "shifted_value_out": (8, None)},
         """
         check_fields(32'h0029806d, 8'ha6, 8'h6d);
@@ -548,9 +583,15 @@ def test_high_lane_software_hardware_merge(tmp_path, simulator, numbering):
     if numbering == "msb0":
         body = "msb0;\n" + body.replace("[15:0]", "[0:15]")
     _directed(
-        tmp_path, simulator, body,
-        3, {"neighbor_value_out": (16, None), "merged_value_out": (16, None),
-            "merged_value_in": (16, "16'h69c3")},
+        tmp_path,
+        simulator,
+        body,
+        3,
+        {
+            "neighbor_value_out": (16, None),
+            "merged_value_out": (16, None),
+            "merged_value_in": (16, "16'h69c3"),
+        },
         """
         expect_word(0, 32'h69c31357);
         // Lanes 2 and 3 select the low and high field bytes independently.
@@ -603,14 +644,17 @@ def test_high_lane_software_hardware_merge(tmp_path, simulator, numbering):
     )
 
 
-@pytest.mark.parametrize("body", [
-    pytest.param(_PACKED, id="packed"),
-    pytest.param(_PACKED + _THIRD, id="packed_with_third"),
-    pytest.param(_MIXED, id="mixed_permissions"),
-    pytest.param(_SINGLE, id="single_byte"),
-    pytest.param(_MSB0, id="msb0"),
-    pytest.param(_MSB0_NARROW, id="msb0_narrow"),
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(_PACKED, id="packed"),
+        pytest.param(_PACKED + _THIRD, id="packed_with_third"),
+        pytest.param(_MIXED, id="mixed_permissions"),
+        pytest.param(_SINGLE, id="single_byte"),
+        pytest.param(_MSB0, id="msb0"),
+        pytest.param(_MSB0_NARROW, id="msb0_narrow"),
+    ],
+)
 def test_generated_narrow_testbench(tmp_path, simulator, body):
     dut = _generate(tmp_path, body)
     generated = (tmp_path / "tb_narrow_regs.v").read_text()

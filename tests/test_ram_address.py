@@ -18,10 +18,20 @@ REPO_ROOT = TESTS_DIR.parent
 @cocotb.test(timeout_time=10, timeout_unit="us")
 async def test_ram_address(dut):
     for name in (
-        "s_axi_aresetn", "s_axi_awaddr", "s_axi_awprot", "s_axi_awvalid",
-        "s_axi_wdata", "s_axi_wstrb", "s_axi_wvalid", "s_axi_bready",
-        "s_axi_araddr", "s_axi_arprot", "s_axi_arvalid", "s_axi_rready",
-        "ram0_dout", "ram0_valid",
+        "s_axi_aresetn",
+        "s_axi_awaddr",
+        "s_axi_awprot",
+        "s_axi_awvalid",
+        "s_axi_wdata",
+        "s_axi_wstrb",
+        "s_axi_wvalid",
+        "s_axi_bready",
+        "s_axi_araddr",
+        "s_axi_arprot",
+        "s_axi_arvalid",
+        "s_axi_rready",
+        "ram0_dout",
+        "ram0_valid",
     ):
         getattr(dut, name).value = 0
 
@@ -35,6 +45,7 @@ async def test_ram_address(dut):
     base = int(os.environ["RAM_BASE"])
     assert len(dut.ram0_addr) == max(1, (entries - 1).bit_length())
     if entries == 1:
+
         async def check_constant_address():
             while True:
                 await RisingEdge(dut.s_axi_aclk)
@@ -142,12 +153,13 @@ async def test_ram_address(dut):
             raise AssertionError("AXI B timeout")
 
     unmapped = [
-        address for address in (base - 4, base + 4 * entries)
+        address
+        for address in (base - 4, base + 4 * entries)
         if 0 <= address < (1 << len(dut.s_axi_araddr))
     ]
     assert unmapped
     for byte_address in unmapped:
-        for channels, response in ((('ar',), 'r'), (('aw', 'w'), 'b')):
+        for channels, response in ((("ar",), "r"), (("aw", "w"), "b")):
             await FallingEdge(dut.s_axi_aclk)
             dut.s_axi_araddr.value = byte_address
             dut.s_axi_awaddr.value = byte_address
@@ -162,7 +174,9 @@ async def test_ram_address(dut):
                         pending.discard(channel)
                 await FallingEdge(dut.s_axi_aclk)
                 for channel in channels:
-                    getattr(dut, f"s_axi_{channel}valid").value = int(channel in pending)
+                    getattr(dut, f"s_axi_{channel}valid").value = int(
+                        channel in pending
+                    )
                 if not pending:
                     break
             else:
@@ -178,13 +192,16 @@ async def test_ram_address(dut):
 
 
 @pytest.mark.sim
-@pytest.mark.parametrize("entries,base", [
-    pytest.param(1, 0x0, id="single-zero-base"),
-    pytest.param(1, 0x4, id="single-nonzero-base"),
-    pytest.param(1, 0x100, id="single-high-base"),
-    pytest.param(2, 0x4, id="two-entries"),
-    pytest.param(3, 0x4, id="three-entries"),
-])
+@pytest.mark.parametrize(
+    "entries,base",
+    [
+        pytest.param(1, 0x0, id="single-zero-base"),
+        pytest.param(1, 0x4, id="single-nonzero-base"),
+        pytest.param(1, 0x100, id="single-high-base"),
+        pytest.param(2, 0x4, id="two-entries"),
+        pytest.param(3, 0x4, id="three-entries"),
+    ],
+)
 def test_ram_address_runner(entries, base):
     sim = os.environ["SIM"]
     runner = get_runner(sim)

@@ -8,9 +8,11 @@ import subprocess
 import sys
 
 import pytest
+from systemrdl.compiler import RDLCompiler
+from systemrdl.walker import RDLWalker
 
-from bus_generator import main
 import bus_generator.bus_generator as bus_generator_module
+from bus_generator import main
 from bus_generator.bus_generator import (
     FieldsGatheringListener,
     MemGatheringListener,
@@ -21,7 +23,6 @@ from bus_generator.bus_generator import (
     warn_memory_alignment,
     warn_unsupported_side_effects,
 )
-from systemrdl import RDLCompiler, RDLWalker
 
 GPIO_RDL = "samples/gpio.rdl"
 FIELD_ACCESS_RDL = "samples/field_access.rdl"
@@ -50,9 +51,7 @@ def _gather(top, listener_cls):
 
 
 def test_version_prefers_distribution_metadata(monkeypatch):
-    monkeypatch.setattr(
-        importlib.metadata, "version", lambda name: "0.3.0"
-    )
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.3.0")
 
     assert bus_generator_module._resolve_version() == "0.3.0"
 
@@ -191,15 +190,17 @@ def test_cli_generates_with_nested_output(tmp_path):
     assert result.stdout == ""
 
 
-@pytest.fixture(params=[
-    pytest.param((16, 15, 0x3, "direct"), id="straddling-16-bit"),
-    pytest.param((16, 7, 0x3, "direct"), id="straddling-low-field-only"),
-    pytest.param((32, 31, 0x1, "direct"), id="unaligned-32-bit"),
-    pytest.param((64, 63, 0x8, "direct"), id="64-bit-field"),
-    pytest.param((64, 7, 0x8, "direct"), id="64-bit-low-field-only"),
-    pytest.param((16, 15, 0x3, "nested"), id="nested-absolute-address"),
-    pytest.param((16, 15, 0x3, "array"), id="straddling-array-element"),
-])
+@pytest.fixture(
+    params=[
+        pytest.param((16, 15, 0x3, "direct"), id="straddling-16-bit"),
+        pytest.param((16, 7, 0x3, "direct"), id="straddling-low-field-only"),
+        pytest.param((32, 31, 0x1, "direct"), id="unaligned-32-bit"),
+        pytest.param((64, 63, 0x8, "direct"), id="64-bit-field"),
+        pytest.param((64, 7, 0x8, "direct"), id="64-bit-low-field-only"),
+        pytest.param((16, 15, 0x3, "nested"), id="nested-absolute-address"),
+        pytest.param((16, 15, 0x3, "array"), id="straddling-array-element"),
+    ]
+)
 def cross_word_register_rdl(tmp_path, request):
     width, high, address, layout = request.param
     register = f"""reg {{
@@ -226,9 +227,14 @@ def cross_word_register_rdl(tmp_path, request):
     return rdl_path, message
 
 
-@pytest.mark.parametrize("template", [
-    "{{axi4l}}_regs.v.jinja2", "{{c_header}}.h.jinja2", "tb_{{axi4l}}_regs.v.jinja2",
-])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{axi4l}}_regs.v.jinja2",
+        "{{c_header}}.h.jinja2",
+        "tb_{{axi4l}}_regs.v.jinja2",
+    ],
+)
 def test_convert_rejects_cross_word_registers(cross_word_register_rdl, template):
     rdl_path, message = cross_word_register_rdl
     top = _compile(str(rdl_path))
@@ -241,13 +247,23 @@ def test_convert_rejects_cross_word_registers(cross_word_register_rdl, template)
 
 @pytest.mark.parametrize("quiet", [False, True], ids=["default", "quiet"])
 def test_cli_rejects_cross_word_registers_before_output(
-    cross_word_register_rdl, tmp_path, quiet,
+    cross_word_register_rdl,
+    tmp_path,
+    quiet,
 ):
     rdl_path, message = cross_word_register_rdl
     output_dir = tmp_path / "generated"
     command = [
-        sys.executable, "-m", "bus_generator.bus_generator", str(rdl_path),
-        "-o", str(output_dir), "-t", "axi4l", "c_header", "tb_axi4l",
+        sys.executable,
+        "-m",
+        "bus_generator.bus_generator",
+        str(rdl_path),
+        "-o",
+        str(output_dir),
+        "-t",
+        "axi4l",
+        "c_header",
+        "tb_axi4l",
     ]
     if quiet:
         command.append("-q")
@@ -262,18 +278,20 @@ def test_cli_rejects_cross_word_registers_before_output(
     assert not output_dir.exists()
 
 
-@pytest.fixture(params=[
-    pytest.param((8, 0x100, "direct"), id="8-bit"),
-    pytest.param((16, 0x100, "direct"), id="16-bit"),
-    pytest.param((24, 0x100, "direct"), id="24-bit"),
-    pytest.param((64, 0x100, "direct"), id="64-bit"),
-    pytest.param((32, 0x1, "direct"), id="unaligned-byte-1"),
-    pytest.param((32, 0x2, "direct"), id="unaligned-byte-2"),
-    pytest.param((32, 0x3, "direct"), id="unaligned-byte-3"),
-    pytest.param((16, 0x1, "direct"), id="narrow-and-unaligned"),
-    pytest.param((32, 0x1, "nested"), id="nested-absolute-address"),
-    pytest.param((32, 0x21, "array"), id="unaligned-array-element"),
-])
+@pytest.fixture(
+    params=[
+        pytest.param((8, 0x100, "direct"), id="8-bit"),
+        pytest.param((16, 0x100, "direct"), id="16-bit"),
+        pytest.param((24, 0x100, "direct"), id="24-bit"),
+        pytest.param((64, 0x100, "direct"), id="64-bit"),
+        pytest.param((32, 0x1, "direct"), id="unaligned-byte-1"),
+        pytest.param((32, 0x2, "direct"), id="unaligned-byte-2"),
+        pytest.param((32, 0x3, "direct"), id="unaligned-byte-3"),
+        pytest.param((16, 0x1, "direct"), id="narrow-and-unaligned"),
+        pytest.param((32, 0x1, "nested"), id="nested-absolute-address"),
+        pytest.param((32, 0x21, "array"), id="unaligned-array-element"),
+    ]
+)
 def unsupported_memory_rdl(tmp_path, request):
     width, address, layout = request.param
     memory = f"external mem {{ memwidth = {width}; mementries = 8; sw = rw; }}"
@@ -301,9 +319,14 @@ def unsupported_memory_rdl(tmp_path, request):
     return rdl_path, messages
 
 
-@pytest.mark.parametrize("template", [
-    "{{axi4l}}_regs.v.jinja2", "{{c_header}}.h.jinja2", "tb_{{axi4l}}_regs.v.jinja2",
-])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{axi4l}}_regs.v.jinja2",
+        "{{c_header}}.h.jinja2",
+        "tb_{{axi4l}}_regs.v.jinja2",
+    ],
+)
 def test_convert_rejects_unsupported_memories(unsupported_memory_rdl, template):
     rdl_path, messages = unsupported_memory_rdl
     top = _compile(str(rdl_path))
@@ -316,13 +339,23 @@ def test_convert_rejects_unsupported_memories(unsupported_memory_rdl, template):
 
 @pytest.mark.parametrize("quiet", [False, True], ids=["default", "quiet"])
 def test_cli_rejects_unsupported_memories_before_output(
-    unsupported_memory_rdl, tmp_path, quiet,
+    unsupported_memory_rdl,
+    tmp_path,
+    quiet,
 ):
     rdl_path, messages = unsupported_memory_rdl
     output_dir = tmp_path / "generated"
     command = [
-        sys.executable, "-m", "bus_generator.bus_generator", str(rdl_path),
-        "-o", str(output_dir), "-t", "axi4l", "c_header", "tb_axi4l",
+        sys.executable,
+        "-m",
+        "bus_generator.bus_generator",
+        str(rdl_path),
+        "-o",
+        str(output_dir),
+        "-t",
+        "axi4l",
+        "c_header",
+        "tb_axi4l",
     ]
     if quiet:
         command.append("-q")
@@ -338,11 +371,21 @@ def test_cli_rejects_unsupported_memories_before_output(
     assert not output_dir.exists()
 
 
-@pytest.mark.parametrize(("width", "address"), [
-    (8, 0x0), (8, 0x1), (8, 0x2), (8, 0x3),
-    (16, 0x0), (16, 0x1), (16, 0x2), (16, 0x6),
-    (32, 0x0), (32, 0x4),
-])
+@pytest.mark.parametrize(
+    ("width", "address"),
+    [
+        (8, 0x0),
+        (8, 0x1),
+        (8, 0x2),
+        (8, 0x3),
+        (16, 0x0),
+        (16, 0x1),
+        (16, 0x2),
+        (16, 0x6),
+        (32, 0x0),
+        (32, 0x4),
+    ],
+)
 def test_registers_contained_in_one_word_pass_validation(tmp_path, width, address):
     rdl_path = tmp_path / "contained.rdl"
     rdl_path.write_text(f"""addrmap contained {{
@@ -368,22 +411,35 @@ def test_packed_narrow_registers_pass_boundary_validation(tmp_path):
     bus_generator_module.validate_supported_data_widths(_compile(str(rdl_path)))
 
 
-@pytest.fixture(params=[
-    pytest.param((8, 0x3, 5, 2, 29, 26, 0x3C000000,
-                  [(8, 0x3C000000)]), id="byte-three-subfield"),
-    pytest.param((16, 0x0, 15, 0, 15, 0, 0x0000FFFF,
-                  [(1, 0xFF), (2, 0xFF00)]), id="low-half"),
-    pytest.param((16, 0x2, 15, 0, 31, 16, 0xFFFF0000,
-                  [(4, 0xFF0000), (8, 0xFF000000)]), id="high-half"),
-    pytest.param((16, 0x1, 11, 4, 19, 12, 0x000FF000,
-                  [(2, 0xF000), (4, 0xF0000)]), id="cross-byte-subfield"),
-    pytest.param((16, 0x6, 11, 4, 27, 20, 0x0FF00000,
-                  [(4, 0xF00000), (8, 0xF000000)]), id="next-word-subfield"),
-    pytest.param((32, 0x4, 23, 8, 23, 8, 0x00FFFF00,
-                  [(2, 0xFF00), (4, 0xFF0000)]), id="aligned-word"),
-])
+@pytest.fixture(
+    params=[
+        pytest.param(
+            (8, 0x3, 5, 2, 29, 26, 0x3C000000, [(8, 0x3C000000)]),
+            id="byte-three-subfield",
+        ),
+        pytest.param(
+            (16, 0x0, 15, 0, 15, 0, 0x0000FFFF, [(1, 0xFF), (2, 0xFF00)]), id="low-half"
+        ),
+        pytest.param(
+            (16, 0x2, 15, 0, 31, 16, 0xFFFF0000, [(4, 0xFF0000), (8, 0xFF000000)]),
+            id="high-half",
+        ),
+        pytest.param(
+            (16, 0x1, 11, 4, 19, 12, 0x000FF000, [(2, 0xF000), (4, 0xF0000)]),
+            id="cross-byte-subfield",
+        ),
+        pytest.param(
+            (16, 0x6, 11, 4, 27, 20, 0x0FF00000, [(4, 0xF00000), (8, 0xF000000)]),
+            id="next-word-subfield",
+        ),
+        pytest.param(
+            (32, 0x4, 23, 8, 23, 8, 0x00FFFF00, [(2, 0xFF00), (4, 0xFF0000)]),
+            id="aligned-word",
+        ),
+    ]
+)
 def field_bus_mapping(tmp_path, request):
-    width, address, high, low, bus_msb, bus_lsb, bus_mask, strobes = request.param
+    width, address, high, low = request.param[:4]
     rdl_path = tmp_path / "field_bus_mapping.rdl"
     rdl_path.write_text(f"""addrmap field_bus_mapping {{
         reg {{
@@ -395,28 +451,42 @@ def field_bus_mapping(tmp_path, request):
 
 
 def test_field_bus_mapping_preserves_logical_positions(field_bus_mapping):
-    top, (width, address, high, low, bus_msb, bus_lsb, bus_mask, strobes) = field_bus_mapping
-    field, = _gather(top, FieldsGatheringListener).fields
+    top, params = field_bus_mapping
+    address, high, low, bus_msb, bus_lsb, bus_mask, strobes = params[1:]
+    (field,) = _gather(top, FieldsGatheringListener).fields
 
     assert field["address"] == address
     assert field["width"] == high - low + 1
-    assert (field["high"], field["low"], field["msb"], field["lsb"]) == (high, low, high, low)
+    assert (field["high"], field["low"], field["msb"], field["lsb"]) == (
+        high,
+        low,
+        high,
+        low,
+    )
     assert field["mask"] == ((1 << (high - low + 1)) - 1) << low
     assert field["reset"] == 0xA
     assert field["bus_address"] == address // 4 * 4
     assert field["aligned_address"] == address // 4
-    assert (field["bus_msb"], field["bus_lsb"], field["bus_low"]) == (bus_msb, bus_lsb, bus_lsb)
+    assert (field["bus_msb"], field["bus_lsb"], field["bus_low"]) == (
+        bus_msb,
+        bus_lsb,
+        bus_lsb,
+    )
     assert field["bus_mask"] == bus_mask
     assert field["wstrb_cases"] == [{"be": be, "mask": mask} for be, mask in strobes]
 
 
 def test_convert_renders_bus_lane_slices(field_bus_mapping):
-    top, (width, address, high, low, bus_msb, bus_lsb, bus_mask, strobes) = field_bus_mapping
+    top, params = field_bus_mapping
+    address, high, low, bus_msb, bus_lsb = params[1:6]
     content = _compact_verilog(convert(top, "{{axi4l}}_regs.v.jinja2"))
     bus_slice = f"[{bus_msb}:{bus_lsb}]"
 
     assert f"outputwire[{high - low}:0]target_value_out" in content
-    assert _assigned_expression(content, "target_value_sw_mask") == f"sw_byte_mask{bus_slice}"
+    assert (
+        _assigned_expression(content, "target_value_sw_mask")
+        == f"sw_byte_mask{bus_slice}"
+    )
     assert f"int_wr_data{bus_slice}&target_value_sw_mask" in content
     assert (
         f"local_rd_data_next{bus_slice}=local_rd_data_next{bus_slice}|target_value_value;"
@@ -428,7 +498,9 @@ def test_convert_renders_bus_lane_slices(field_bus_mapping):
 
 
 def test_c_header_uses_aligned_word_coordinates(field_bus_mapping):
-    top, (width, address, high, low, bus_msb, bus_lsb, bus_mask, strobes) = field_bus_mapping
+    top, params = field_bus_mapping
+    address, high, low = params[1:4]
+    bus_lsb, bus_mask = params[5:7]
     content = convert(top, "{{c_header}}.h.jinja2")
     macros = dict(re.findall(r"#define (\w+) (0x[0-9a-f]+)", content))
 
@@ -441,50 +513,174 @@ def test_c_header_uses_aligned_word_coordinates(field_bus_mapping):
     }
 
 
-@pytest.fixture(params=[
-    pytest.param(("explicit", 32, 0x0, "[0:7]", (31, 24, 0xFF000000),
-                  (31, 24, 0xFF000000), [(8, 0xFF000000)]), id="upper-byte"),
-    pytest.param(("explicit", 32, 0x0, "[24:31]", (7, 0, 0xFF),
-                  (7, 0, 0xFF), [(1, 0xFF)]), id="lower-byte"),
-    pytest.param(("explicit", 32, 0x0, "[3:12]", (28, 19, 0x1FF80000),
-                  (28, 19, 0x1FF80000), [(4, 0xF80000), (8, 0x1F000000)]),
-                 id="asymmetric-upper-cross-byte"),
-    pytest.param(("explicit", 32, 0x0, "[19:28]", (12, 3, 0x1FF8),
-                  (12, 3, 0x1FF8), [(1, 0xF8), (2, 0x1F00)]),
-                 id="asymmetric-lower-cross-byte"),
-    pytest.param(("explicit", 32, 0x0, "[0:31]", (31, 0, 0xFFFFFFFF),
-                  (31, 0, 0xFFFFFFFF),
-                  [(1, 0xFF), (2, 0xFF00), (4, 0xFF0000), (8, 0xFF000000)]),
-                 id="full-word"),
-    pytest.param(("explicit", 32, 0x0, "[0:0]", (31, 31, 0x80000000),
-                  (31, 31, 0x80000000), [(8, 0x80000000)]), id="bit-zero"),
-    pytest.param(("explicit", 32, 0x0, "[31:31]", (0, 0, 0x1),
-                  (0, 0, 0x1), [(1, 0x1)]), id="bit-thirty-one"),
-    pytest.param(("explicit", 8, 0x3, "[1:4]", (6, 3, 0x78),
-                  (30, 27, 0x78000000), [(8, 0x78000000)]), id="packed-byte"),
-    pytest.param(("explicit", 16, 0x1, "[2:10]", (13, 5, 0x3FE0),
-                  (21, 13, 0x3FE000), [(2, 0xE000), (4, 0x3F0000)]),
-                 id="packed-half-cross-byte"),
-    pytest.param(("explicit", 16, 0x2, "[0:15]", (15, 0, 0xFFFF),
-                  (31, 16, 0xFFFF0000), [(4, 0xFF0000), (8, 0xFF000000)]),
-                 id="packed-full-half"),
-    pytest.param(("explicit", 16, 0x6, "[2:10]", (13, 5, 0x3FE0),
-                  (29, 21, 0x3FE00000), [(4, 0xE00000), (8, 0x3F000000)]),
-                 id="packed-next-word"),
-    pytest.param(("explicit", 32, 0x4, "[0:7]", (31, 24, 0xFF000000),
-                  (31, 24, 0xFF000000), [(8, 0xFF000000)]), id="aligned-next-word"),
-    pytest.param(("inferred", 32, 0x0, "[3:12]", (28, 19, 0x1FF80000),
-                  (28, 19, 0x1FF80000), [(4, 0xF80000), (8, 0x1F000000)]),
-                 id="inferred-ascending-order"),
-    pytest.param(("inherited", 32, 0x0, "[0:0]", (31, 31, 0x80000000),
-                  (31, 31, 0x80000000), [(8, 0x80000000)]), id="inherited-bit-zero"),
-    pytest.param(("inherited", 32, 0x0, "[31:31]", (0, 0, 0x1),
-                  (0, 0, 0x1), [(1, 0x1)]), id="inherited-bit-thirty-one"),
-    pytest.param(("inherited", 32, 0x0, "", (7, 0, 0xFF),
-                  (7, 0, 0xFF), [(1, 0xFF)]), id="inherited-implicit"),
-])
+@pytest.fixture(
+    params=[
+        pytest.param(
+            (
+                "explicit",
+                32,
+                0x0,
+                "[0:7]",
+                (31, 24, 0xFF000000),
+                (31, 24, 0xFF000000),
+                [(8, 0xFF000000)],
+            ),
+            id="upper-byte",
+        ),
+        pytest.param(
+            ("explicit", 32, 0x0, "[24:31]", (7, 0, 0xFF), (7, 0, 0xFF), [(1, 0xFF)]),
+            id="lower-byte",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                32,
+                0x0,
+                "[3:12]",
+                (28, 19, 0x1FF80000),
+                (28, 19, 0x1FF80000),
+                [(4, 0xF80000), (8, 0x1F000000)],
+            ),
+            id="asymmetric-upper-cross-byte",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                32,
+                0x0,
+                "[19:28]",
+                (12, 3, 0x1FF8),
+                (12, 3, 0x1FF8),
+                [(1, 0xF8), (2, 0x1F00)],
+            ),
+            id="asymmetric-lower-cross-byte",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                32,
+                0x0,
+                "[0:31]",
+                (31, 0, 0xFFFFFFFF),
+                (31, 0, 0xFFFFFFFF),
+                [(1, 0xFF), (2, 0xFF00), (4, 0xFF0000), (8, 0xFF000000)],
+            ),
+            id="full-word",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                32,
+                0x0,
+                "[0:0]",
+                (31, 31, 0x80000000),
+                (31, 31, 0x80000000),
+                [(8, 0x80000000)],
+            ),
+            id="bit-zero",
+        ),
+        pytest.param(
+            ("explicit", 32, 0x0, "[31:31]", (0, 0, 0x1), (0, 0, 0x1), [(1, 0x1)]),
+            id="bit-thirty-one",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                8,
+                0x3,
+                "[1:4]",
+                (6, 3, 0x78),
+                (30, 27, 0x78000000),
+                [(8, 0x78000000)],
+            ),
+            id="packed-byte",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                16,
+                0x1,
+                "[2:10]",
+                (13, 5, 0x3FE0),
+                (21, 13, 0x3FE000),
+                [(2, 0xE000), (4, 0x3F0000)],
+            ),
+            id="packed-half-cross-byte",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                16,
+                0x2,
+                "[0:15]",
+                (15, 0, 0xFFFF),
+                (31, 16, 0xFFFF0000),
+                [(4, 0xFF0000), (8, 0xFF000000)],
+            ),
+            id="packed-full-half",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                16,
+                0x6,
+                "[2:10]",
+                (13, 5, 0x3FE0),
+                (29, 21, 0x3FE00000),
+                [(4, 0xE00000), (8, 0x3F000000)],
+            ),
+            id="packed-next-word",
+        ),
+        pytest.param(
+            (
+                "explicit",
+                32,
+                0x4,
+                "[0:7]",
+                (31, 24, 0xFF000000),
+                (31, 24, 0xFF000000),
+                [(8, 0xFF000000)],
+            ),
+            id="aligned-next-word",
+        ),
+        pytest.param(
+            (
+                "inferred",
+                32,
+                0x0,
+                "[3:12]",
+                (28, 19, 0x1FF80000),
+                (28, 19, 0x1FF80000),
+                [(4, 0xF80000), (8, 0x1F000000)],
+            ),
+            id="inferred-ascending-order",
+        ),
+        pytest.param(
+            (
+                "inherited",
+                32,
+                0x0,
+                "[0:0]",
+                (31, 31, 0x80000000),
+                (31, 31, 0x80000000),
+                [(8, 0x80000000)],
+            ),
+            id="inherited-bit-zero",
+        ),
+        pytest.param(
+            ("inherited", 32, 0x0, "[31:31]", (0, 0, 0x1), (0, 0, 0x1), [(1, 0x1)]),
+            id="inherited-bit-thirty-one",
+        ),
+        pytest.param(
+            ("inherited", 32, 0x0, "", (7, 0, 0xFF), (7, 0, 0xFF), [(1, 0xFF)]),
+            id="inherited-implicit",
+        ),
+    ]
+)
 def msb0_field_mapping(tmp_path, request):
-    order, width, address, field_range, positions, bus_positions, strobes = request.param
+    order, width, address, field_range, positions, bus_positions, strobes = (
+        request.param
+    )
     high, low, mask = positions
     bus_msb, bus_lsb, bus_mask = bus_positions
     field_width = high - low + 1
@@ -516,28 +712,52 @@ def msb0_field_mapping(tmp_path, request):
         # Implicit msb0 allocation starts at the high RDL indexes, not [0:7].
         rdl_msb, rdl_lsb = 24, 31
     assert (node.high, node.low, node.msb, node.lsb) == (
-        rdl_lsb, rdl_msb, rdl_msb, rdl_lsb,
+        rdl_lsb,
+        rdl_msb,
+        rdl_msb,
+        rdl_lsb,
     )
-    original = (node.high, node.low, node.msb, node.lsb, node.width,
-                node.get_property("reset"))
+    original = (
+        node.high,
+        node.low,
+        node.msb,
+        node.lsb,
+        node.width,
+        node.get_property("reset"),
+    )
     expected = {
-        "address": address, "aligned_address": address // 4,
+        "address": address,
+        "aligned_address": address // 4,
         "bus_address": address // 4 * 4,
-        "high": high, "low": low, "msb": high, "lsb": low, "mask": mask,
-        "bus_msb": bus_msb, "bus_lsb": bus_lsb, "bus_low": bus_lsb,
-        "bus_mask": bus_mask, "width": field_width, "reset": reset,
+        "high": high,
+        "low": low,
+        "msb": high,
+        "lsb": low,
+        "mask": mask,
+        "bus_msb": bus_msb,
+        "bus_lsb": bus_lsb,
+        "bus_low": bus_lsb,
+        "bus_mask": bus_mask,
+        "width": field_width,
+        "reset": reset,
         "wstrb_cases": [{"be": be, "mask": lane_mask} for be, lane_mask in strobes],
     }
     yield top, expected
     # Gathering/rendering must not rewrite the shared compiled SystemRDL model.
-    assert (node.high, node.low, node.msb, node.lsb, node.width,
-            node.get_property("reset")) == original
+    assert (
+        node.high,
+        node.low,
+        node.msb,
+        node.lsb,
+        node.width,
+        node.get_property("reset"),
+    ) == original
 
 
 def test_msb0_field_metadata_is_normalized(msb0_field_mapping):
     top, expected = msb0_field_mapping
     for _ in range(2):
-        field, = _gather(top, FieldsGatheringListener).fields
+        (field,) = _gather(top, FieldsGatheringListener).fields
         assert {key: field[key] for key in expected} == expected
 
 
@@ -549,7 +769,10 @@ def test_msb0_rtl_uses_normalized_bus_slices(msb0_field_mapping):
     assert f"outputwire[{expected['width'] - 1}:0]target_value_out" in content
     assert f"reg[{expected['width'] - 1}:0]target_value_value;" in content
     assert f"target_value_value<='h{expected['reset']:x};" in content
-    assert _assigned_expression(content, "target_value_sw_mask") == f"sw_byte_mask{bus_slice}"
+    assert (
+        _assigned_expression(content, "target_value_sw_mask")
+        == f"sw_byte_mask{bus_slice}"
+    )
     assert f"int_wr_data{bus_slice}&target_value_sw_mask" in content
     assert (
         f"local_rd_data_next{bus_slice}=local_rd_data_next{bus_slice}|target_value_value;"
@@ -604,7 +827,9 @@ def test_single_narrow_register_keeps_byte_address_bits(tmp_path, width):
             field {{ sw = rw; hw = r; }} value[{width - 1}:0];
         }} target @ 0x0;
     }};""")
-    content = _compact_verilog(convert(_compile(str(rdl_path)), "{{axi4l}}_regs.v.jinja2"))
+    content = _compact_verilog(
+        convert(_compile(str(rdl_path)), "{{axi4l}}_regs.v.jinja2")
+    )
 
     assert "localparamintegerADDR_WIDTH=3;" in content
     assert "inputwire[2:0]s_axi_awaddr" in content
@@ -613,16 +838,37 @@ def test_single_narrow_register_keeps_byte_address_bits(tmp_path, width):
     assert "[-1:0]" not in content
 
 
-@pytest.mark.parametrize(("body", "expected_width"), [
-    pytest.param("reg { field {} value[31:0]; } first @ 0;", 3, id="one-word"),
-    pytest.param("reg { field {} value[31:0]; } pair[2];", 3, id="two-words"),
-    pytest.param("reg { field {} value[31:0]; } target @ 0x3fc;", 10, id="last-word"),
-    pytest.param("reg { field {} value[31:0]; } target @ 0x400;", 11, id="next-word"),
-    pytest.param("reg { field {} value[31:0]; } pair[2] @ 0 += 0x400;", 11, id="sparse-array"),
-    pytest.param("addrmap { reg { field {} value[31:0]; } target @ 4; } block @ 0x400;", 11, id="nested-map"),
-    pytest.param("external mem { memwidth = 32; mementries = 4; sw = rw; } ram @ 0x400;", 11, id="memory-only"),
-    pytest.param("reg { field {} value[31:0]; } target @ 0x4000000000000000;", 63, id="large-integer-address"),
-])
+@pytest.mark.parametrize(
+    ("body", "expected_width"),
+    [
+        pytest.param("reg { field {} value[31:0]; } first @ 0;", 3, id="one-word"),
+        pytest.param("reg { field {} value[31:0]; } pair[2];", 3, id="two-words"),
+        pytest.param(
+            "reg { field {} value[31:0]; } target @ 0x3fc;", 10, id="last-word"
+        ),
+        pytest.param(
+            "reg { field {} value[31:0]; } target @ 0x400;", 11, id="next-word"
+        ),
+        pytest.param(
+            "reg { field {} value[31:0]; } pair[2] @ 0 += 0x400;", 11, id="sparse-array"
+        ),
+        pytest.param(
+            "addrmap { reg { field {} value[31:0]; } target @ 4; } block @ 0x400;",
+            11,
+            id="nested-map",
+        ),
+        pytest.param(
+            "external mem { memwidth = 32; mementries = 4; sw = rw; } ram @ 0x400;",
+            11,
+            id="memory-only",
+        ),
+        pytest.param(
+            "reg { field {} value[31:0]; } target @ 0x4000000000000000;",
+            63,
+            id="large-integer-address",
+        ),
+    ],
+)
 def test_address_width_uses_map_extent(tmp_path, body, expected_width):
     rdl_path = tmp_path / "extent.rdl"
     rdl_path.write_text(f"addrmap extent {{ {body} }};")
@@ -718,18 +964,30 @@ def test_unsupported_side_effects_warn_with_field_path(caplog):
 
     warnings = [record.getMessage() for record in caplog.records]
     expected = [
-        "Ignoring unsupported SystemRDL side-effect semantics on field "
-        "'side_effects.effects.read_clear': onread=rclr",
-        "Ignoring unsupported SystemRDL side-effect semantics on field "
-        "'side_effects.effects.write_set': onwrite=woset",
-        "Ignoring unsupported SystemRDL side-effect semantics on field "
-        "'side_effects.effects.write_once_rw': sw=rw1 (write-once)",
-        "Ignoring unsupported SystemRDL side-effect semantics on field "
-        "'side_effects.effects.write_once_w': sw=w1 (write-once)",
-        "Ignoring unsupported SystemRDL side-effect semantics on field "
-        "'side_effects.pulse_control.pulse': singlepulse=true",
-        "Ignoring unsupported SystemRDL side-effect semantics on memory "
-        "'side_effects.write_once_mem': sw=rw1 (write-once)",
+        (
+            "Ignoring unsupported SystemRDL side-effect semantics on field "
+            "'side_effects.effects.read_clear': onread=rclr"
+        ),
+        (
+            "Ignoring unsupported SystemRDL side-effect semantics on field "
+            "'side_effects.effects.write_set': onwrite=woset"
+        ),
+        (
+            "Ignoring unsupported SystemRDL side-effect semantics on field "
+            "'side_effects.effects.write_once_rw': sw=rw1 (write-once)"
+        ),
+        (
+            "Ignoring unsupported SystemRDL side-effect semantics on field "
+            "'side_effects.effects.write_once_w': sw=w1 (write-once)"
+        ),
+        (
+            "Ignoring unsupported SystemRDL side-effect semantics on field "
+            "'side_effects.pulse_control.pulse': singlepulse=true"
+        ),
+        (
+            "Ignoring unsupported SystemRDL side-effect semantics on memory "
+            "'side_effects.write_once_mem': sw=rw1 (write-once)"
+        ),
     ]
     assert warnings == [
         message + "; generation will continue without implementing these side effects."
@@ -778,10 +1036,13 @@ def test_cli_reports_side_effect_warnings_at_default_verbosity(
     assert result.returncode == 0
     for filename in ("side_effects_regs.v", "side_effects.h", "tb_side_effects_regs.v"):
         assert (tmp_path / filename).is_file()
-    assert ("Ignoring unsupported SystemRDL side-effect semantics" in result.stderr) is expect_warnings
+    assert (
+        "Ignoring unsupported SystemRDL side-effect semantics" in result.stderr
+    ) is expect_warnings
     assert ("singlepulse=true" in result.stderr) is expect_warnings
     assert (
-        "generation will continue without implementing these side effects." in result.stderr
+        "generation will continue without implementing these side effects."
+        in result.stderr
     ) is expect_warnings
 
 
@@ -816,9 +1077,14 @@ def memory_alignment_rdl(tmp_path, request):
     return rdl_path, base, memory_path
 
 
-@pytest.mark.parametrize("template", [
-    "{{axi4l}}_regs.v.jinja2", "{{c_header}}.h.jinja2", "tb_{{axi4l}}_regs.v.jinja2",
-])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{axi4l}}_regs.v.jinja2",
+        "{{c_header}}.h.jinja2",
+        "tb_{{axi4l}}_regs.v.jinja2",
+    ],
+)
 def test_convert_accepts_word_aligned_memories(memory_alignment_rdl, template):
     rdl_path, _, _ = memory_alignment_rdl
 
@@ -835,9 +1101,11 @@ def test_memory_alignment_warnings(memory_alignment_rdl, caplog):
     expected = []
     if base % 16:
         expected = [
-            f"Memory 'alignment_test.{memory_path}' at 0x{base:x} is not aligned "
-            "to its 16-byte address window; consider aligning its base to a "
-            "multiple of 0x10 so synthesis can eliminate address subtraction."
+            (
+                f"Memory 'alignment_test.{memory_path}' at 0x{base:x} is not aligned "
+                "to its 16-byte address window; consider aligning its base to a "
+                "multiple of 0x10 so synthesis can eliminate address subtraction."
+            )
         ]
     assert [(record.levelname, record.getMessage()) for record in caplog.records] == [
         ("WARNING", message) for message in expected
@@ -876,7 +1144,11 @@ def test_cli_reports_memory_alignment_warning_once(tmp_path, quiet, warning_coun
     result = subprocess.run(command, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stderr
-    for filename in ("alignment_test_regs.v", "alignment_test.h", "tb_alignment_test_regs.v"):
+    for filename in (
+        "alignment_test_regs.v",
+        "alignment_test.h",
+        "tb_alignment_test_regs.v",
+    ):
         assert (tmp_path / filename).is_file()
     warning = (
         "Memory 'alignment_test.ram0' at 0xc is not aligned to its 16-byte address "
@@ -1037,7 +1309,7 @@ def test_memory_address_geometry(tmp_path, entries, base):
     }};
     """)
     top = _compile(str(rdl_path))
-    mem, = _gather(top, MemGatheringListener).mems
+    (mem,) = _gather(top, MemGatheringListener).mems
     width = max(1, (entries - 1).bit_length())
     assert mem["addr_width"] == width
     assert mem["mementries"] == entries
@@ -1102,8 +1374,15 @@ def test_convert_renders_response_targets(rdl_path):
         "&&(int_write?b_credit:r_credit)"
     )
     assert "if(int_issue&&int_idle)beginint_active_target<=int_target;" in content
-    for obsolete in ("_rd_sel", "rd_mem_pending", "rd_mem_valid", "rd_mem_issue",
-                     "target_allowed", "read_waiting", "write_waiting"):
+    for obsolete in (
+        "_rd_sel",
+        "rd_mem_pending",
+        "rd_mem_valid",
+        "rd_mem_issue",
+        "target_allowed",
+        "read_waiting",
+        "write_waiting",
+    ):
         assert obsolete not in content
 
     targets = [f"{mem['name']}_target" for mem in mems]
@@ -1150,21 +1429,27 @@ def test_convert_renders_arbitration(rdl_path):
         pop = "arb_grant_read" if channel == "ar" else "arb_grant_write"
         assert f"reg[1:0]{count};" in content
         assert f"{count}<=2'd0;" in content
-        assert _assigned_expression(content, f"s_axi_{channel}ready") == f"{count}!=2'd2"
+        assert (
+            _assigned_expression(content, f"s_axi_{channel}ready") == f"{count}!=2'd2"
+        )
         assert _assigned_expression(content, f"{channel}_push") == (
             f"s_axi_{channel}valid&&s_axi_{channel}ready"
         )
-        assert _assigned_expression(content, f"{channel}_fifo_idx") == f"{count}[0]-1'b1"
+        assert (
+            _assigned_expression(content, f"{channel}_fifo_idx") == f"{count}[0]-1'b1"
+        )
         assert (
             f"case({{{channel}_push,{pop}}})"
             f"2'b10:{count}<={count}+2'd1;"
             f"2'b01:{count}<={count}-2'd1;"
             f"default:{count}<={count};endcase"
         ) in content
-    for fifo, width, source in (("ar_addr_fifo", "ADDR_WIDTH", "araddr"),
-                                ("aw_addr_fifo", "ADDR_WIDTH", "awaddr"),
-                                ("w_data_fifo", "DATA_WIDTH", "wdata"),
-                                ("w_strb_fifo", "STRB_WIDTH", "wstrb")):
+    for fifo, width, source in (
+        ("ar_addr_fifo", "ADDR_WIDTH", "araddr"),
+        ("aw_addr_fifo", "ADDR_WIDTH", "awaddr"),
+        ("w_data_fifo", "DATA_WIDTH", "wdata"),
+        ("w_strb_fifo", "STRB_WIDTH", "wstrb"),
+    ):
         assert f"reg[2*{width}-1:0]{fifo};" in content
         assert re.findall(rf"{fifo}<=([^;]+);", content) == [
             f"{{{fifo}[{width}-1:0],s_axi_{source}}}"
@@ -1180,15 +1465,21 @@ def test_convert_renders_shift_on_push_response_fifos(rdl_path):
     assert _assigned_expression(content, "stages") == (
         "{r_data_fifo[DATA_WIDTH+r_data_bit],r_data_fifo[r_data_bit]}"
     )
-    assert _assigned_expression(content, "s_axi_rdata[r_data_bit]") == "stages[r_fifo_idx]"
+    assert (
+        _assigned_expression(content, "s_axi_rdata[r_data_bit]") == "stages[r_fifo_idx]"
+    )
     for channel in ("b", "r"):
         count = f"{channel}_fifo_count"
         assert f"reg[1:0]{count};" in content
         assert f"reg[1:0]{channel}_err_fifo;" in content
         assert f"wire{channel}_fifo_idx;" in content
         assert f"{count}<=2'd0;" in content
-        assert _assigned_expression(content, f"{channel}_fifo_idx") == f"{count}[0]-1'b1"
-        assert _assigned_expression(content, f"s_axi_{channel}valid") == f"{count}!=2'd0"
+        assert (
+            _assigned_expression(content, f"{channel}_fifo_idx") == f"{count}[0]-1'b1"
+        )
+        assert (
+            _assigned_expression(content, f"s_axi_{channel}valid") == f"{count}!=2'd0"
+        )
         assert _assigned_expression(content, f"s_axi_{channel}resp") == (
             f"{channel}_err_fifo[{channel}_fifo_idx]?2'b10:2'b00"
         )
@@ -1199,9 +1490,14 @@ def test_convert_renders_shift_on_push_response_fifos(rdl_path):
             f"default:{count}<={count};endcase"
         ) in content
         direction = "wr" if channel == "b" else "rd"
-        updates = {f"{channel}_err_fifo": f"{{{channel}_err_fifo[0],int_{direction}_err}}"}
+        updates = {
+            f"{channel}_err_fifo": f"{{{channel}_err_fifo[0],int_{direction}_err}}"
+        }
         if channel == "r":
-            updates = {"r_data_fifo": "{r_data_fifo[DATA_WIDTH-1:0],int_rd_data}", **updates}
+            updates = {
+                "r_data_fifo": "{r_data_fifo[DATA_WIDTH-1:0],int_rd_data}",
+                **updates,
+            }
         assert (
             f"always@(posedges_axi_aclk)beginif(s_axi_aresetn&&{channel}_ack_fire)begin"
             + "".join(f"{name}<={value};" for name, value in updates.items())
@@ -1281,7 +1577,9 @@ def test_convert_renders_registered_response_sources(rdl_path):
             f"always@(posedges_axi_aclk)beginif(s_axi_aresetn&&{name}_tag_push)begin"
             f"{name}_tag_fifo<={update};endend"
         ) in content
-        assert re.findall(rf"{name}_tag_fifo(?:\[[^]]+\])?<=([^;]+);", content) == [update]
+        assert re.findall(rf"{name}_tag_fifo(?:\[[^]]+\])?<=([^;]+);", content) == [
+            update
+        ]
         assert (
             f"case({{{name}_tag_push,{name}_tag_pop}})"
             f"2'b10:{name}_tag_fifo_count<={name}_tag_fifo_count+3'd1;"
@@ -1343,8 +1641,7 @@ def test_convert_renders_memory_response_model(rdl_path):
             f"s_axi_aresetn&&{valid_pipe}[MEMORY_READ_LATENCY-1]"
         )
         assert _assigned_expression(content, f"{name}_dout") == (
-            f"{name}_valid?{data_pipe}[MEMORY_READ_LATENCY-1]:"
-            f"{mem['width']}'hdeadbeef"
+            f"{name}_valid?{data_pipe}[MEMORY_READ_LATENCY-1]:{mem['width']}'hdeadbeef"
         )
         assert f"if(s_axi_aresetn&&{name}_en==1'b1&&{name}_we==1'b1)" in content
         assert (
@@ -1353,17 +1650,22 @@ def test_convert_renders_memory_response_model(rdl_path):
             f"{name}_din[{name}_be_idx*8+:8];"
         ) in content
         read_check = (
-            "readable access signal mismatch" if mem["is_sw_readable"]
+            "readable access signal mismatch"
+            if mem["is_sw_readable"]
             else "prohibited read reached external memory"
         )
         write_check = (
-            "byte enable/write mismatch" if mem["is_sw_writable"]
+            "byte enable/write mismatch"
+            if mem["is_sw_writable"]
             else "prohibited write reached external memory"
         )
         assert f"{mem['hierarchy']} {read_check}" in rendered
         assert f"{mem['hierarchy']} {write_check}" in rendered
         if mem["is_sw_writable"]:
-            assert f"{mem['hierarchy']} WSTRB=0 issued a physical memory access" in rendered
+            assert (
+                f"{mem['hierarchy']} WSTRB=0 issued a physical memory access"
+                in rendered
+            )
 
 
 if __name__ == "__main__":

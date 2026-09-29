@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from bus_generator import main
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -16,10 +17,20 @@ GENERATED = REPO_ROOT / "generated"
 def _run_icarus(top, dut, tb, tmp_path):
     sim = tmp_path / "sim.vvp"
     compile_proc = subprocess.run(
-        ["iverilog", "-g2012", "-o", str(sim), "-s", f"tb_{top}_regs", str(dut), str(tb)],
+        [
+            "iverilog",
+            "-g2012",
+            "-o",
+            str(sim),
+            "-s",
+            f"tb_{top}_regs",
+            str(dut),
+            str(tb),
+        ],
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     assert compile_proc.returncode == 0, (
         f"iverilog failed:\n{compile_proc.stdout}\n{compile_proc.stderr}"
@@ -30,6 +41,7 @@ def _run_icarus(top, dut, tb, tmp_path):
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     return run_proc.returncode, run_proc.stdout + run_proc.stderr
 
@@ -51,6 +63,7 @@ def _run_verilator(top, dut, tb, tmp_path):
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     assert compile_proc.returncode == 0, (
         f"verilator failed:\n{compile_proc.stdout}\n{compile_proc.stderr}"
@@ -62,6 +75,7 @@ def _run_verilator(top, dut, tb, tmp_path):
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     return run_proc.returncode, run_proc.stdout + run_proc.stderr
 
@@ -72,6 +86,7 @@ def _run_questa(top, dut, tb, tmp_path):
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     assert library_proc.returncode == 0, (
         f"vlib failed:\n{library_proc.stdout}\n{library_proc.stderr}"
@@ -82,6 +97,7 @@ def _run_questa(top, dut, tb, tmp_path):
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     assert compile_proc.returncode == 0, (
         f"vlog failed:\n{compile_proc.stdout}\n{compile_proc.stderr}"
@@ -100,12 +116,15 @@ def _run_questa(top, dut, tb, tmp_path):
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        check=False,
     )
     return run_proc.returncode, run_proc.stdout + run_proc.stderr
 
 
 @pytest.mark.sim
-@pytest.mark.parametrize("top", ["field_access", "gpio", "mem_access", "ram", "simple", "wstrb"])
+@pytest.mark.parametrize(
+    "top", ["field_access", "gpio", "mem_access", "ram", "simple", "wstrb"]
+)
 def test_self_check_tb(top, tmp_path):
     sim = os.environ["SIM"]
 
