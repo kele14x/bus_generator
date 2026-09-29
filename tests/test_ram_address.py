@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -11,7 +10,6 @@ from cocotb.triggers import ClockCycles, FallingEdge, ReadOnly, RisingEdge
 from cocotb_tools.runner import get_runner
 
 from bus_generator import main
-from simulator_support import require_simulator
 
 TESTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
@@ -188,7 +186,8 @@ async def test_ram_address(dut):
     pytest.param(3, 0x4, id="three-entries"),
 ])
 def test_ram_address_runner(entries, base):
-    sim = require_simulator(os.environ, shutil.which)
+    sim = os.environ["SIM"]
+    runner = get_runner(sim)
     build_dir = REPO_ROOT / "sim_build" / "ram_address" / sim / f"{entries}_{base:x}"
     build_dir.mkdir(parents=True, exist_ok=True)
     rdl = build_dir / "ram_address.rdl"
@@ -203,7 +202,6 @@ def test_ram_address_runner(entries, base):
     main([str(rdl), "-o", str(build_dir), "-t", "axi4l"])
     if str(TESTS_DIR) not in sys.path:
         sys.path.insert(0, str(TESTS_DIR))
-    runner = get_runner(sim)
     runner.build(
         sources=[build_dir / "ram_address_regs.v"],
         hdl_toplevel="ram_address_regs",

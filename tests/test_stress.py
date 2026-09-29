@@ -8,16 +8,14 @@ times out.
 
 Sources are read from the ``generated/`` tree so manual edits to the RTL survive
 a re-run. Select Icarus, Verilator, or Questa with ``SIM=icarus``,
-``SIM=verilator``, ``SIM=questa``, ``SIM=iverilog`` (an alias for Icarus), or
-``SIM=vsim`` (an alias for Questa).
-``SIM`` is required and the selected simulator executables must be available.
-Missing simulator support or generated DUT artifacts fail rather than skip.
+``SIM=verilator``, or ``SIM=questa``.
+``SIM`` is required and passed directly to cocotb's runner.
+Missing simulator executables or generated DUT artifacts fail rather than skip.
 """
 
 import os
 import random
 import re
-import shutil
 import sys
 from collections import Counter, deque
 from pathlib import Path
@@ -28,9 +26,6 @@ import pytest
 from bus_generator.bus_generator import FieldsGatheringListener, MemGatheringListener
 from cocotb.clock import Clock
 from cocotb.triggers import FallingEdge, RisingEdge, SimTimeoutError, Timer, with_timeout
-from simulator_support import (
-    require_simulator,
-)
 from systemrdl import RDLCompiler, RDLWalker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1559,10 +1554,7 @@ def _write_contract_wrapper(source, top, build_dir, *, combinational):
 
 
 def _run_cocotb_test(top, testcase):
-    try:
-        sim = require_simulator(os.environ, shutil.which)
-    except (RuntimeError, ValueError) as error:
-        pytest.fail(str(error), pytrace=False)
+    sim = os.environ["SIM"]
     dut = GENERATED / "axi4l" / f"{top}_regs.v"
     if not dut.is_file():
         pytest.fail(f"missing {dut}; run `make artifacts` first", pytrace=False)

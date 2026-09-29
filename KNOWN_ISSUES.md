@@ -20,9 +20,8 @@ Source references reflect the reorganized template; line numbers may change.
 - **Evidence:** `make -n -W src/bus_generator/bus_generator.py artifacts` reported
   nothing to rebuild. With artifacts absent, all 26 artifact-dependent simulator
   cases can skip despite a valid simulator selection.
-- **Impact:** A green run need not verify current generator output. This is
-  separate from the explicit simulator-selection checks, which do fail when
-  selection is missing or unavailable.
+- **Impact:** A green run need not verify current generator output. Skipped
+  artifact-dependent tests do not attempt to launch the selected simulator.
 - **Suggested resolution:** Include generator dependencies and generate fresh
   artifacts for automated verification, or fail clearly when they are missing.
 

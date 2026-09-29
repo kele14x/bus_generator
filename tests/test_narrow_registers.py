@@ -1,12 +1,10 @@
 """Independent AXI and hardware-port checks using explicit expected values."""
 
 import os
-import shutil
 from textwrap import dedent, indent
 
 import pytest
 from bus_generator import main
-from simulator_support import require_simulator
 from test_simulation import _run_icarus, _run_questa, _run_verilator
 
 pytestmark = pytest.mark.sim
@@ -14,10 +12,7 @@ pytestmark = pytest.mark.sim
 
 @pytest.fixture
 def simulator():
-    try:
-        return require_simulator(os.environ, shutil.which)
-    except (RuntimeError, ValueError) as error:
-        pytest.fail(str(error), pytrace=False)
+    return os.environ["SIM"]
 
 
 _PACKED = """

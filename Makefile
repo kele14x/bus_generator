@@ -29,8 +29,7 @@ help:
 	@printf '\n%s\n' 'Simulator selection'
 	@printf '  %s\n' \
 		'Set SIM explicitly for sim, all, and tests.' \
-		'Supported: icarus, verilator, questa' \
-		'Aliases:   iverilog = icarus, vsim = questa'
+		'Supported: icarus, verilator, questa'
 	@printf '\n%s\n' 'Examples'
 	@printf '  %s\n' \
 		'make unit' \

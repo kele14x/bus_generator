@@ -57,11 +57,9 @@ The simulator policy requires an explicit selection:
 SIM=icarus
 SIM=verilator
 SIM=questa
-SIM=iverilog
-SIM=vsim
 ```
 
-Unset or unavailable simulator selections fail immediately instead of silently
-skipping simulator-marked tests. The external-memory overlapping-read timeout
-was resolved by the edge-synchronous cocotb BFM refactor, and the full suite
-passes under both `SIM=icarus` and `SIM=verilator`.
+Tests read `SIM` directly from the environment without a default or aliases;
+cocotb or subprocess execution reports missing executables. The external-memory
+overlapping-read timeout was resolved by the edge-synchronous cocotb BFM refactor,
+and the full suite passes under both `SIM=icarus` and `SIM=verilator`.

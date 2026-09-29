@@ -25,5 +25,5 @@ dev = [
 
 [tool.pytest.ini_options]
 markers = [
-    "sim: RTL simulation tests (slow; require SIM=icarus, SIM=verilator, SIM=questa, SIM=iverilog, or SIM=vsim)",
+    "sim: RTL simulation tests (slow; require SIM=icarus, SIM=verilator, or SIM=questa)",
 ]

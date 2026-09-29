@@ -10,21 +10,16 @@ and the pass/fail banner.
 The Verilog sources are read from the ``generated/`` tree (produced by
 ``make artifacts``) so manual edits to those files are picked up by re-running
 ``make sim`` — the test never regenerates over them. Set ``SIM=icarus``,
-``SIM=verilator``, ``SIM=questa``, or ``SIM=vsim`` (an alias for Questa) to
-select a backend. ``SIM`` is required; the selected backend must be installed.
-``SIM=iverilog`` is accepted as an alias for Icarus.
+``SIM=verilator``, or ``SIM=questa`` to select a backend.
+``SIM`` is required; the selected backend must be installed.
 """
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 from bus_generator import main
-from simulator_support import (
-    require_simulator,
-)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GENERATED = REPO_ROOT / "generated"
@@ -37,13 +32,6 @@ SAMPLES = [
     pytest.param("simple", id="simple"),
     pytest.param("wstrb", id="wstrb"),
 ]
-
-
-def _selected_simulator():
-    try:
-        return require_simulator(os.environ, shutil.which)
-    except (RuntimeError, ValueError) as error:
-        pytest.fail(str(error), pytrace=False)
 
 
 def _run_icarus(top, dut, tb, tmp_path):
@@ -140,19 +128,18 @@ def _run_questa(top, dut, tb, tmp_path):
 @pytest.mark.sim
 @pytest.mark.parametrize("top", SAMPLES)
 def test_self_check_tb(top, tmp_path):
-    sim = _selected_simulator()
+    sim = os.environ["SIM"]
 
     dut = GENERATED / "axi4l" / f"{top}_regs.v"
     tb = GENERATED / "tb_axi4l" / f"tb_{top}_regs.v"
     if not dut.is_file() or not tb.is_file():
         pytest.skip(f"missing {dut.name}/{tb.name}; run `make artifacts` first")
 
-    if sim == "icarus":
-        returncode, output = _run_icarus(top, dut, tb, tmp_path)
-    elif sim == "verilator":
-        returncode, output = _run_verilator(top, dut, tb, tmp_path)
-    else:
-        returncode, output = _run_questa(top, dut, tb, tmp_path)
+    returncode, output = {
+        "icarus": _run_icarus,
+        "verilator": _run_verilator,
+        "questa": _run_questa,
+    }[sim](top, dut, tb, tmp_path)
 
     assert "TEST PASSED" in output, f"TB did not pass:\n{output}"
     assert "TEST FAILED" not in output, f"TB reported failures:\n{output}"
@@ -162,7 +149,7 @@ def test_self_check_tb(top, tmp_path):
 @pytest.mark.sim
 @pytest.mark.parametrize("base", [0x0, 0x4, 0x100])
 def test_single_entry_memory_tb(tmp_path, base):
-    sim = _selected_simulator()
+    sim = os.environ["SIM"]
     top = "single_entry"
     rdl = tmp_path / f"{top}.rdl"
     rdl.write_text(f"""addrmap {top} {{
@@ -177,12 +164,11 @@ def test_single_entry_memory_tb(tmp_path, base):
     main([str(rdl), "-o", str(tmp_path), "-t", "axi4l", "tb_axi4l"])
     dut = tmp_path / f"{top}_regs.v"
     tb = tmp_path / f"tb_{top}_regs.v"
-    if sim == "icarus":
-        returncode, output = _run_icarus(top, dut, tb, tmp_path)
-    elif sim == "verilator":
-        returncode, output = _run_verilator(top, dut, tb, tmp_path)
-    else:
-        returncode, output = _run_questa(top, dut, tb, tmp_path)
+    returncode, output = {
+        "icarus": _run_icarus,
+        "verilator": _run_verilator,
+        "questa": _run_questa,
+    }[sim](top, dut, tb, tmp_path)
 
     assert "TEST PASSED" in output, f"TB did not pass:\n{output}"
     assert "TEST FAILED" not in output, f"TB reported failures:\n{output}"
@@ -192,7 +178,7 @@ def test_single_entry_memory_tb(tmp_path, base):
 @pytest.mark.sim
 @pytest.mark.parametrize("scenario", ["output_isolation", "queue_ordering_reset"])
 def test_request_fifo_tb(tmp_path, scenario):
-    sim = _selected_simulator()
+    sim = os.environ["SIM"]
     top = "request_fifo"
     rdl = tmp_path / f"{top}.rdl"
     rdl.write_text("""addrmap request_fifo {
@@ -524,12 +510,11 @@ module tb_request_fifo_regs;
     end
 endmodule
 """.replace("@SCENARIO@", scenario))
-    if sim == "icarus":
-        returncode, output = _run_icarus(top, dut, tb, tmp_path)
-    elif sim == "verilator":
-        returncode, output = _run_verilator(top, dut, tb, tmp_path)
-    else:
-        returncode, output = _run_questa(top, dut, tb, tmp_path)
+    returncode, output = {
+        "icarus": _run_icarus,
+        "verilator": _run_verilator,
+        "questa": _run_questa,
+    }[sim](top, dut, tb, tmp_path)
 
     assert returncode == 0, f"{sim} exited {returncode}:\n{output}"
     assert "TEST PASSED" in output, f"TB did not pass:\n{output}"
