@@ -1,7 +1,7 @@
 # Known Issues
 
 Open correctness, compatibility, and verification issues identified during the
-project review on 2026-09-25. This document records findings, not implemented fixes.
+project review on 2026-09-25. Resolved issues are removed from this document.
 Source references reflect the reorganized template; line numbers may change.
 
 - **P1:** High priority: incorrect data, possible deadlock, unsupported semantics,
@@ -54,18 +54,6 @@ Source references reflect the reorganized template; line numbers may change.
   globally suppressing warnings.
 
 ## Verification
-
-### KI-11 [P1] Physical memory and the stress scoreboard share storage
-
-- **Location:** `tests/test_stress.py:112-124`, `:154`, and `:484-488`.
-- **Cause:** `ExternalMemoryModel` receives the same list used by the expected
-  results model.
-- **Impact:** Updating expected state changes physical memory before the DUT
-  writes. Incorrect physical writes also change expected results. An isolated
-  check confirmed both directions of this aliasing, so missing or corrupted
-  memory writes can escape detection.
-- **Suggested resolution:** Maintain independent physical and expected storage;
-  only DUT memory-interface transactions should update physical storage.
 
 ### KI-12 [P2] Simulation may use stale artifacts or skip missing artifacts
 
@@ -125,6 +113,6 @@ reorganization or creation of this document:
 | `SIM=icarus uv run pytest -q` | 76 passed |
 | `SIM=verilator uv run pytest -q` | 26 failed, 50 passed; Verilator 5.052, KI-10 |
 
-Focused reproductions used temporary fixtures; they are not committed regression
-tests. Passing the existing suite does not establish that the issues above are
-fixed. No functional fixes or test changes accompany this document.
+The original focused reproductions used temporary fixtures and were not committed
+regression tests. Those review results do not establish that the issues above are
+fixed. No functional fixes or test changes accompanied the original review.

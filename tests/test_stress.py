@@ -21,6 +21,7 @@ import shutil
 import sys
 from collections import Counter, deque
 from pathlib import Path
+from types import SimpleNamespace
 
 import cocotb
 import pytest
@@ -575,6 +576,38 @@ async def memory_read_held_data(dut):
 @cocotb.test(timeout_time=10, timeout_unit="us")
 async def memory_read_valid_pulse(dut):
     await _check_memory_read_timing(dut, invalid_data=0xDEADBEEF)
+
+
+@cocotb.test(timeout_time=1, timeout_unit="ms")
+async def memory_write_scoreboard(dut):
+    """Readback must detect omitted/corrupted writes without changing expectations."""
+    _, model, master = await _setup_stress(dut, SEED, AxiLiteMaster)
+    ops = [op for op in model.write_ops if op["kind"] == "mem"
+           and op["mem"]["is_sw_readable"]
+           and op["idx"] in (0, op["mem"]["mementries"] - 1)]
+    assert ops
+    assert await _check_readback(dut, master, model) == 0
+
+    for op in ops:
+        for wstrb in (STRB_MASK, 0x5, 0xA, 0):
+            previous, _ = model.expected_read(op)
+            data = previous ^ DATA_MASK
+            model.write(op, data, wstrb, dut)
+            expected = model.expected_read(op)
+            assert (expected[0] != previous) == bool(wstrb)
+
+            # No AXI write: an expected update must not reach physical RAM.
+            assert await _check_readback(dut, master, model) == int(bool(wstrb))
+            if wstrb:
+                byte = (wstrb & -wstrb).bit_length() - 1
+                corrupted = data ^ (1 << (8 * byte))
+                assert await master.write(op["addr"], corrupted, wstrb) == 0
+                assert model.expected_read(op) == expected
+                assert await _check_readback(dut, master, model) == 1
+
+            assert await master.write(op["addr"], data, wstrb) == 0
+            assert model.expected_read(op) == expected
+            assert await _check_readback(dut, master, model) == 0
 
 
 @cocotb.test(timeout_time=1, timeout_unit="ms")
@@ -1557,6 +1590,38 @@ def _run_cocotb_test(top, testcase):
             os.environ.pop("STRESS_TOP", None)
         else:
             os.environ["STRESS_TOP"] = old_top
+
+
+@pytest.mark.parametrize("top", ["ram", "mem_access"])
+@pytest.mark.parametrize("wstrb", [STRB_MASK, 0x5, 0xA, 0])
+def test_memory_storage_is_independent(top, wstrb):
+    model = RdlStressModel(top)
+    for mem in model.mem_specs:
+        name = mem["name"]
+        dut = SimpleNamespace(s_axi_aclk=None, s_axi_aresetn=None, **{
+            f"{name}_{suffix}": None
+            for suffix in ("addr", "en", "we", "be", "din", "dout", "valid")
+        })
+        initial = list(model.mems[name])
+        memory = ExternalMemoryModel(dut, mem, model.mems[name])
+        assert memory.values == initial
+        assert memory.values is not model.mems[name]
+
+        for op in model.write_ops:
+            if op["kind"] == "mem" and op["mem"] is mem:
+                model.write(op, initial[op["idx"]] ^ DATA_MASK, wstrb, dut)
+        assert memory.values == initial
+
+        expected = list(model.mems[name])
+        for index in range(len(memory.values)):
+            memory.values[index] ^= DATA_MASK
+        assert model.mems[name] == expected
+
+
+@pytest.mark.sim
+@pytest.mark.parametrize("top", ["ram", "mem_access"])
+def test_memory_write_scoreboard(top):
+    _run_cocotb_test(top, "memory_write_scoreboard")
 
 
 @pytest.mark.sim
