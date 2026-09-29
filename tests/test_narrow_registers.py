@@ -1,6 +1,8 @@
+#!/usr/bin/env python3
 """Independent AXI and hardware-port checks using explicit expected values."""
 
 import os
+import sys
 from textwrap import dedent, indent
 
 import pytest
@@ -616,3 +618,7 @@ def test_generated_narrow_testbench(tmp_path, simulator, body):
     tb = tmp_path / "generated_runner.sv"
     tb.write_text(generated.replace("\nendmodule", _WATCHDOG + "\nendmodule", 1))
     _simulate(simulator, dut, tb, tmp_path)
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, *sys.argv[1:]]))

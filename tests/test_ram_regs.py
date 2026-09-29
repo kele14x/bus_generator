@@ -253,4 +253,4 @@ def test_ram_regs_runner():
 
 
 if __name__ == "__main__":
-    test_ram_regs_runner()
+    raise SystemExit(pytest.main([__file__, *sys.argv[1:]]))

@@ -219,4 +219,4 @@ def test_ram_address_runner(entries, base):
 
 
 if __name__ == "__main__":
-    test_ram_address_runner(3, 0x4)
+    raise SystemExit(pytest.main([__file__, *sys.argv[1:]]))

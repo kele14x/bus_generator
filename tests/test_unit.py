@@ -1364,3 +1364,7 @@ def test_convert_renders_memory_response_model(rdl_path):
         assert f"{mem['hierarchy']} {write_check}" in rendered
         if mem["is_sw_writable"]:
             assert f"{mem['hierarchy']} WSTRB=0 issued a physical memory access" in rendered
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, *sys.argv[1:]]))

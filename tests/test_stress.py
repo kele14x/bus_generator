@@ -1667,3 +1667,7 @@ def test_stress_read_overlap(top):
 @pytest.mark.parametrize("top", SAMPLES)
 def test_stress_mixed_overlap(top):
     _run_cocotb_test(top, "stress_mixed_overlap")
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, *sys.argv[1:]]))
